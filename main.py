@@ -10,6 +10,8 @@ import pandas as pd
 import numpy as np
 import math
 
+# --------------------------------------------------------------------------------------------------------------
+# Plotting
 def plot_comprehensive_stats_with_csv(trainer, episode, successes, max_altitudes, max_velocities, final_rewards,
                                       csv_file_path=None):
     """Plot comprehensive statistics including training progress and test results with optional CSV comparison"""
@@ -737,6 +739,8 @@ def plot_horizontal_velocity_analysis(trainer, trajectory_data):
     plt.close()
     print("✅ Horizontal velocity analysis saved!")
 
+# --------------------------------------------------------------------------------------------------
+
 
 # Add these function calls to your training loop:
 
@@ -821,17 +825,17 @@ class FixedRocketEnvironment(gym.Env):
 
     def should_separate_stages(self):
         """Determine if we should separate stages"""
-        # Separate when we have sufficient velocity OR reach altitude
-        sufficient_velocity = self.velocity_horizontal > 2000  # Start turn earlier
+        # Only separate if we have POSITIVE horizontal velocity
+        sufficient_velocity = self.velocity_horizontal > 500  # Must be moving forward
         sufficient_altitude = self.altitude >= self.stage_separation_altitude
 
-        return (sufficient_velocity or sufficient_altitude) and not self.stage_separated
+        # Also consider if first stage is nearly out of fuel
+        first_stage_fuel = self.mass - (self.rocket_params['dry_mass'] +
+                                        self.rocket_params['second_stage_dry_mass'] +
+                                        self.rocket_params['second_stage_fuel'])
+        fuel_low = first_stage_fuel < self.rocket_params['fuel_mass'] * 0.1  # 10% fuel remaining
 
-    def get_initial_gimbal_bias(self):
-        """Provide a small initial gimbal bias to encourage turning"""
-        if self.altitude < 10000:  # In first 10km
-            return 0.05  # Small right-turn bias
-        return 0.0
+        return (sufficient_altitude and sufficient_velocity) or fuel_low
 
     def reset(self, seed=None, options=None):
         if seed is not None:
@@ -1099,6 +1103,15 @@ class FixedRocketEnvironment(gym.Env):
     def calculate_reward(self):
         reward = 0
 
+        # Early termination for very bad trajectories
+        if self.altitude > 50000 and self.velocity_horizontal < -200:
+            # If we're high up but moving significantly backwards, abort
+            return -50, True
+
+        if self.altitude > 100000 and self.velocity_horizontal < 1000:
+            # If we're in space but have very little horizontal velocity
+            return -20, True
+
         # Heavy penalty for crashing
         if self.altitude <= 0 and self.velocity_vertical < -1.0:
             return -100, True
@@ -1113,11 +1126,18 @@ class FixedRocketEnvironment(gym.Env):
         # HORIZONTAL VELOCITY REWARDS (greatly increased)
         total_velocity = np.sqrt(self.velocity_vertical ** 2 + self.velocity_horizontal ** 2)
 
-        # Primary horizontal velocity reward - much stronger
+        # HORIZONTAL VELOCITY REWARDS (only reward positive horizontal velocity)
         if self.velocity_horizontal > 0:
-            horizontal_velocity_bonus = (
-                                                    self.velocity_horizontal / self.min_horizontal_velocity) * 100  # Increased from 30
+            horizontal_velocity_bonus = (self.velocity_horizontal / self.min_horizontal_velocity) * 100
             reward += horizontal_velocity_bonus
+
+            # Extra bonus for good horizontal velocity
+            if self.velocity_horizontal > 1000:
+                reward += 10
+            if self.velocity_horizontal > 3000:
+                reward += 20
+            if self.velocity_horizontal > 5000:
+                reward += 50
 
         # Bonus for high horizontal velocity relative to total velocity
         if total_velocity > 500:  # Only when moving significantly
@@ -1308,7 +1328,7 @@ class BetterCriticNetwork(nn.Module):
 
 class SimplePPOAgent:
     def __init__(self, state_dim, action_dim, lr=3e-4, gamma=0.99, gae_lambda=0.95,
-                 clip_epsilon=0.2, ppo_epochs=10, batch_size=128, use_better_networks=True):  # Add option
+                 clip_epsilon=0.2, ppo_epochs=10, batch_size=128, use_better_networks=True):
         self.state_dim = state_dim
         self.action_dim = action_dim
 
@@ -1342,6 +1362,9 @@ class SimplePPOAgent:
         self.next_states = []
         self.dones = []
         self.log_probs = []
+
+        self.last_action = None
+        self.smoothing_factor = 0.3  # Smooth actions to prevent oscillations
 
     def get_action(self, state, deterministic=False):
         try:
@@ -1385,6 +1408,11 @@ class SimplePPOAgent:
             action_pre_tanh = torch.clamp(action_pre_tanh, -10, 10)
             log_prob = normal.log_prob(action_pre_tanh).sum(dim=-1).item()
 
+            # Action smoothing to prevent erratic gimbal movements
+            if self.last_action is not None and not deterministic:
+                action = self.smoothing_factor * self.last_action + (1 - self.smoothing_factor) * action
+
+            self.last_action = action.copy()
             return action, log_prob
 
         except Exception as e:
@@ -1752,7 +1780,7 @@ class OrbitalRocketTrainer:
 
         plt.tight_layout()
         plt.savefig(f'orbital_trajectory_{filename_suffix}.png')
-        plt.close()
+        plt.close()  # this
 
 
 class FixedRocketTrainer:
@@ -1951,9 +1979,9 @@ if __name__ == "__main__":
         'fuel_mass': 410000,
         'thrust': 7600e3,
         'isp': 282,
-        'second_stage_dry_mass': 9500,
-        'second_stage_fuel': 110000,
-        'second_stage_thrust': 934e3,
+        'second_stage_dry_mass': 4000,
+        'second_stage_fuel': 96000,
+        'second_stage_thrust': 984e3,
         'second_stage_isp': 348,
     }
 
