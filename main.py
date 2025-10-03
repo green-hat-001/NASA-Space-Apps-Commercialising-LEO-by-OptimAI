@@ -343,20 +343,23 @@ def plot_comprehensive_stats_with_csv(trainer, episode, successes, max_altitudes
 
 
 def plot_detailed_trajectory(trainer, trajectory_data, title_suffix=""):
-    """Plot detailed trajectory analysis"""
+    """Plot detailed trajectory analysis with horizontal velocity and trajectory"""
     if not trajectory_data:
         return
 
-    fig = plt.figure(figsize=(18, 12))
+    fig = plt.figure(figsize=(20, 12))  # Increased figure size
 
     # Extract data
     times = [s['time'] for s in trajectory_data]
     altitudes = [s['altitude'] for s in trajectory_data]
-    velocities = [s['velocity'] for s in trajectory_data]
+    velocities_total = [s['velocity_total'] for s in trajectory_data]
+    velocities_vertical = [s['velocity_vertical'] for s in trajectory_data]
+    velocities_horizontal = [s['velocity_horizontal'] for s in trajectory_data]
     masses = [s['mass'] for s in trajectory_data]
+    distances = [s['distance'] for s in trajectory_data]
 
     # 1. Altitude profile
-    plt.subplot(2, 3, 1)
+    plt.subplot(2, 4, 1)
     plt.plot(times, [alt / 1000 for alt in altitudes], 'b-', linewidth=2)
     plt.axhline(y=trainer.env.target_altitude / 1000, color='r', linestyle='--',
                 label=f'Target: {trainer.env.target_altitude / 1000:.0f}km')
@@ -366,38 +369,92 @@ def plot_detailed_trajectory(trainer, trajectory_data, title_suffix=""):
     plt.legend()
     plt.grid(True, alpha=0.3)
 
-    # 2. Velocity profile
-    plt.subplot(2, 3, 2)
-    plt.plot(times, velocities, 'g-', linewidth=2)
+    # 2. Velocity profiles
+    plt.subplot(2, 4, 2)
+    plt.plot(times, velocities_total, 'b-', linewidth=2, label='Total Velocity')
+    plt.plot(times, velocities_vertical, 'g-', linewidth=1.5, alpha=0.8, label='Vertical Velocity')
+    plt.plot(times, velocities_horizontal, 'r-', linewidth=1.5, alpha=0.8, label='Horizontal Velocity')
     plt.axhline(y=trainer.env.orbital_velocity, color='r', linestyle='--',
                 label=f'Orbital: {trainer.env.orbital_velocity:.0f}m/s')
+    plt.axhline(y=trainer.env.min_horizontal_velocity, color='orange', linestyle='--',
+                label=f'Min Horizontal: {trainer.env.min_horizontal_velocity:.0f}m/s')
     plt.xlabel('Time (s)')
     plt.ylabel('Velocity (m/s)')
-    plt.title('Velocity vs Time')
+    plt.title('Velocity Components vs Time')
     plt.legend()
     plt.grid(True, alpha=0.3)
 
     # 3. Mass decay
-    plt.subplot(2, 3, 3)
+    plt.subplot(2, 4, 3)
     plt.plot(times, [m / 1000 for m in masses], 'purple', linewidth=2)
     plt.xlabel('Time (s)')
     plt.ylabel('Mass (tons)')
     plt.title('Rocket Mass vs Time')
     plt.grid(True, alpha=0.3)
 
-    # 4. Velocity vs Altitude (phase plot)
-    plt.subplot(2, 3, 4)
-    plt.plot([alt / 1000 for alt in altitudes], velocities, 'b-', linewidth=2)
-    plt.axhline(y=trainer.env.orbital_velocity, color='r', linestyle='--')
-    plt.axvline(x=trainer.env.target_altitude / 1000, color='r', linestyle='--')
+    # 4. HORIZONTAL VELOCITY vs Altitude
+    plt.subplot(2, 4, 4)
+    plt.plot([alt / 1000 for alt in altitudes], velocities_horizontal, 'r-', linewidth=2, label='Horizontal Velocity')
+    plt.axhline(y=trainer.env.min_horizontal_velocity, color='orange', linestyle='--',
+                label=f'Target Horizontal: {trainer.env.min_horizontal_velocity:.0f}m/s')
+    plt.axvline(x=trainer.env.target_altitude / 1000, color='r', linestyle='--',
+                label=f'Target Altitude: {trainer.env.target_altitude / 1000:.0f}km')
     plt.xlabel('Altitude (km)')
-    plt.ylabel('Velocity (m/s)')
-    plt.title('Velocity vs Altitude (Phase Plot)')
+    plt.ylabel('Horizontal Velocity (m/s)')
+    plt.title('Horizontal Velocity vs Altitude')
+    plt.legend()
     plt.grid(True, alpha=0.3)
 
-    # 5. Energy analysis
-    plt.subplot(2, 3, 5)
-    kinetic_energy = [0.5 * v ** 2 / 1e6 for v in velocities]  # MJ/kg
+    # 5. TRAJECTORY PROFILE (Horizontal Distance vs Altitude)
+    plt.subplot(2, 4, 5)
+    plt.plot([d / 1000 for d in distances], [alt / 1000 for alt in altitudes], 'b-', linewidth=2)
+
+    # Mark key points
+    if len(distances) > 0:
+        # Launch site
+        plt.plot(0, 0, 'go', markersize=8, label='Launch')
+
+        # Stage separation point
+        sep_points = [i for i, s in enumerate(trajectory_data) if s.get('stage') == '2nd']
+        if sep_points:
+            sep_idx = sep_points[0]
+            plt.plot(distances[sep_idx] / 1000, altitudes[sep_idx] / 1000, 'ro',
+                     markersize=8, label='Stage Separation')
+
+        # Current position
+        plt.plot(distances[-1] / 1000, altitudes[-1] / 1000, 'k*',
+                 markersize=10, label='Final Position')
+
+    plt.xlabel('Horizontal Distance (km)')
+    plt.ylabel('Altitude (km)')
+    plt.title('Rocket Trajectory Profile')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.axis('equal')
+
+    # 6. Velocity Ratio (Horizontal/Total)
+    plt.subplot(2, 4, 6)
+    velocity_ratios = []
+    for i in range(len(velocities_total)):
+        if velocities_total[i] > 0:
+            ratio = velocities_horizontal[i] / velocities_total[i]
+            velocity_ratios.append(ratio)
+        else:
+            velocity_ratios.append(0)
+
+    plt.plot(times, velocity_ratios, 'purple', linewidth=2)
+    plt.axhline(y=0.9, color='g', linestyle='--', label='Ideal Orbit Ratio (0.9)')
+    plt.axhline(y=0.7, color='y', linestyle='--', label='Good Ratio (0.7)')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Horizontal/Total Velocity Ratio')
+    plt.title('Velocity Direction Efficiency')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.ylim(0, 1)
+
+    # 7. Energy analysis
+    plt.subplot(2, 4, 7)
+    kinetic_energy = [0.5 * v ** 2 / 1e6 for v in velocities_total]  # MJ/kg
     potential_energy = [9.8 * alt / 1000 for alt in altitudes]  # kJ/kg
     total_energy = [ke + pe / 1000 for ke, pe in zip(kinetic_energy, potential_energy)]  # MJ/kg
 
@@ -410,14 +467,14 @@ def plot_detailed_trajectory(trainer, trajectory_data, title_suffix=""):
     plt.legend()
     plt.grid(True, alpha=0.3)
 
-    # 6. Acceleration analysis (derived from velocity)
-    plt.subplot(2, 3, 6)
-    if len(velocities) > 1:
-        acceleration = np.diff(velocities) / np.diff(times)
-        # Pad to match time array length
+    # 8. Acceleration analysis
+    plt.subplot(2, 4, 8)
+    if len(velocities_total) > 1:
+        acceleration = np.diff(velocities_total) / np.diff(times)
         acceleration = np.concatenate(([acceleration[0]], acceleration))
         plt.plot(times, acceleration, 'orange', linewidth=2)
         plt.axhline(y=9.8, color='r', linestyle='--', label='Gravity (9.8 m/s²)')
+        plt.axhline(y=0, color='k', linestyle='-', alpha=0.3)
         plt.xlabel('Time (s)')
         plt.ylabel('Acceleration (m/s²)')
         plt.title('Acceleration Profile')
@@ -427,6 +484,7 @@ def plot_detailed_trajectory(trainer, trajectory_data, title_suffix=""):
     plt.tight_layout()
     plt.savefig(f'detailed_trajectory_{title_suffix}.png', dpi=150, bbox_inches='tight')
     plt.close()
+    print(f"✅ Detailed trajectory plot saved: detailed_trajectory_{title_suffix}.png")
 
 
 def plot_real_time_training(trainer, current_episode):
@@ -521,6 +579,163 @@ def plot_real_time_training(trainer, current_episode):
     plt.tight_layout()
     plt.savefig(f'real_time_training_episode_{current_episode}.png', dpi=150, bbox_inches='tight')
     plt.close()
+
+
+def plot_trajectory_3d(trainer, trajectory_data, title_suffix=""):
+    """Plot 3D trajectory of the rocket"""
+    if not trajectory_data:
+        return
+
+    try:
+        from mpl_toolkits.mplot3d import Axes3D
+
+        fig = plt.figure(figsize=(12, 10))
+        ax = fig.add_subplot(111, projection='3d')
+
+        # Extract trajectory data
+        distances = [s['distance'] for s in trajectory_data]
+        altitudes = [s['altitude'] for s in trajectory_data]
+        times = [s['time'] for s in trajectory_data]
+        velocities_horizontal = [s['velocity_horizontal'] for s in trajectory_data]
+
+        # Create a simple curved trajectory (in reality this would be more complex)
+        x = distances
+        y = [0] * len(distances)  # Assuming straight line trajectory
+        z = altitudes
+
+        # Color by velocity
+        colors = velocities_horizontal
+        sc = ax.scatter(x, y, z, c=colors, cmap='viridis', s=20, alpha=0.7)
+
+        # Plot trajectory line
+        ax.plot(x, y, z, 'b-', alpha=0.5, linewidth=1)
+
+        # Mark key points
+        launch_idx = 0
+        ax.plot(x[launch_idx], y[launch_idx], z[launch_idx], 'go', markersize=10, label='Launch')
+
+        # Stage separation
+        sep_points = [i for i, s in enumerate(trajectory_data) if s.get('stage') == '2nd']
+        if sep_points:
+            sep_idx = sep_points[0]
+            ax.plot(x[sep_idx], y[sep_idx], z[sep_idx], 'ro', markersize=8, label='Stage Separation')
+
+        # Final position
+        ax.plot(x[-1], y[-1], z[-1], 'k*', markersize=12, label='Final Position')
+
+        ax.set_xlabel('Horizontal Distance (m)')
+        ax.set_ylabel('Cross Range (m)')
+        ax.set_zlabel('Altitude (m)')
+        ax.set_title(f'3D Rocket Trajectory - {title_suffix}')
+
+        # Add colorbar for horizontal velocity
+        cbar = plt.colorbar(sc, ax=ax, shrink=0.6)
+        cbar.set_label('Horizontal Velocity (m/s)')
+
+        ax.legend()
+        plt.tight_layout()
+        plt.savefig(f'3d_trajectory_{title_suffix}.png', dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"✅ 3D trajectory plot saved: 3d_trajectory_{title_suffix}.png")
+
+    except ImportError:
+        print("⚠️  3D plotting not available, skipping 3D trajectory")
+
+
+def plot_horizontal_velocity_analysis(trainer, trajectory_data):
+    """Specialized plot focusing on horizontal velocity buildup"""
+    if not trajectory_data:
+        return
+
+    fig = plt.figure(figsize=(15, 10))
+
+    # Extract data
+    times = [s['time'] for s in trajectory_data]
+    altitudes = [s['altitude'] for s in trajectory_data]
+    velocities_horizontal = [s['velocity_horizontal'] for s in trajectory_data]
+    velocities_vertical = [s['velocity_vertical'] for s in trajectory_data]
+    velocities_total = [s['velocity_total'] for s in trajectory_data]
+
+    # 1. Horizontal velocity progression
+    plt.subplot(2, 2, 1)
+    plt.plot(times, velocities_horizontal, 'r-', linewidth=2, label='Horizontal Velocity')
+    plt.axhline(y=trainer.env.min_horizontal_velocity, color='orange', linestyle='--',
+                linewidth=2, label=f'Target Horizontal: {trainer.env.min_horizontal_velocity:.0f}m/s')
+
+    # Mark stage separation
+    sep_points = [i for i, s in enumerate(trajectory_data) if s.get('stage') == '2nd']
+    if sep_points:
+        sep_idx = sep_points[0]
+        plt.axvline(x=times[sep_idx], color='g', linestyle=':', alpha=0.7, label='Stage Separation')
+
+    plt.xlabel('Time (s)')
+    plt.ylabel('Horizontal Velocity (m/s)')
+    plt.title('Horizontal Velocity Buildup')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+
+    # 2. Horizontal vs Vertical velocity comparison
+    plt.subplot(2, 2, 2)
+    plt.plot(times, velocities_horizontal, 'r-', linewidth=2, label='Horizontal')
+    plt.plot(times, velocities_vertical, 'b-', linewidth=2, label='Vertical')
+    plt.plot(times, velocities_total, 'k--', linewidth=1, alpha=0.7, label='Total')
+
+    if sep_points:
+        plt.axvline(x=times[sep_idx], color='g', linestyle=':', alpha=0.7, label='Stage Separation')
+
+    plt.xlabel('Time (s)')
+    plt.ylabel('Velocity (m/s)')
+    plt.title('Horizontal vs Vertical Velocity')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+
+    # 3. Velocity ratio over time
+    plt.subplot(2, 2, 3)
+    velocity_ratios = []
+    for i in range(len(velocities_total)):
+        if velocities_total[i] > 10:  # Avoid division by small numbers
+            ratio = velocities_horizontal[i] / velocities_total[i]
+            velocity_ratios.append(ratio)
+        else:
+            velocity_ratios.append(0)
+
+    plt.plot(times, velocity_ratios, 'purple', linewidth=2)
+    plt.axhline(y=0.9, color='g', linestyle='--', label='Orbit Target (0.9)')
+    plt.axhline(y=0.7, color='y', linestyle='--', label='Good Performance (0.7)')
+
+    if sep_points:
+        plt.axvline(x=times[sep_idx], color='g', linestyle=':', alpha=0.7, label='Stage Separation')
+
+    plt.xlabel('Time (s)')
+    plt.ylabel('Horizontal/Total Velocity Ratio')
+    plt.title('Velocity Direction Efficiency')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.ylim(0, 1)
+
+    # 4. Horizontal velocity vs altitude
+    plt.subplot(2, 2, 4)
+    plt.plot([alt / 1000 for alt in altitudes], velocities_horizontal, 'r-', linewidth=2)
+    plt.axhline(y=trainer.env.min_horizontal_velocity, color='orange', linestyle='--',
+                label=f'Target: {trainer.env.min_horizontal_velocity:.0f}m/s')
+    plt.axvline(x=trainer.env.target_altitude / 1000, color='b', linestyle='--',
+                label=f'Target Alt: {trainer.env.target_altitude / 1000:.0f}km')
+
+    # Mark key altitude points
+    key_altitudes = [50, 100, 200]  # km
+    for alt_km in key_altitudes:
+        plt.axvline(x=alt_km, color='gray', linestyle=':', alpha=0.5)
+
+    plt.xlabel('Altitude (km)')
+    plt.ylabel('Horizontal Velocity (m/s)')
+    plt.title('Horizontal Velocity vs Altitude')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig('horizontal_velocity_analysis.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print("✅ Horizontal velocity analysis saved!")
 
 
 # Add these function calls to your training loop:
@@ -1728,7 +1943,7 @@ def final_test(trainer, num_tests=10):
     return successes, max_altitudes, max_velocities, final_rewards, best_trajectory
 
 
-# Main execution
+
 # Main execution
 if __name__ == "__main__":
     rocket_params = {
@@ -1773,15 +1988,29 @@ if __name__ == "__main__":
         csv_file_path=csv_path
     )
 
-    # 2. Detailed trajectory of best run
+    # 2. Detailed trajectory analysis of best run
     if best_trajectory:
         plot_detailed_trajectory(trainer, best_trajectory, "best_performance")
-        print("✅ Best trajectory graph saved!")
+        try:
+            plot_trajectory_3d(trainer, best_trajectory, "best_performance")
+            print("✅ 3D trajectory graph saved!")
+        except Exception as e:
+            print(f"⚠️  3D trajectory plot failed: {e}")
+        print("✅ Best trajectory graphs saved!")
 
-    # 3. Final trajectory (last test run)
+    # 3. Final trajectory analysis (last test run)
     if trainer.env.trajectory:
         plot_detailed_trajectory(trainer, trainer.env.trajectory, "final_test")
-        print("✅ Final trajectory graph saved!")
+        try:
+            plot_trajectory_3d(trainer, trainer.env.trajectory, "final_test")
+            print("✅ Final 3D trajectory graph saved!")
+        except Exception as e:
+            print(f"⚠️  Final 3D trajectory plot failed: {e}")
+        print("✅ Final trajectory graphs saved!")
+
+    # 4. Additional horizontal velocity analysis
+    print("📊 Generating horizontal velocity analysis...")
+    plot_horizontal_velocity_analysis(trainer, best_trajectory if best_trajectory else trainer.env.trajectory)
 
     print("🎉 All graphs generated successfully!")
     # ========== END GRAPH GENERATION ==========
