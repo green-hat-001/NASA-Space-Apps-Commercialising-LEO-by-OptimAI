@@ -538,6 +538,25 @@ class FixedRocketEnvironment(gym.Env):
     def __init__(self, rocket_params=None):
         super(FixedRocketEnvironment, self).__init__()
 
+        # UPDATE ACTION SPACE FOR PITCH CONTROL:
+        self.action_space = spaces.Box(
+            low=np.array([0.0, -1.0], dtype=np.float32),  # [throttle, pitch]
+            high=np.array([1.0, 1.0], dtype=np.float32),
+            dtype=np.float32
+        )
+
+        # ADD HORIZONTAL VELOCITY COMPONENTS:
+        self.vx = 0.0  # Horizontal velocity (m/s)
+        self.vz = 0.0  # Vertical velocity (m/s) - rename from self.velocity
+        self.x = 0.0  # Horizontal position (m)
+
+        # Update observation space for horizontal velocity
+        self.observation_space = spaces.Box(
+            low=np.array([0, -1000, -1000, 0, -1], dtype=np.float32),  # Added vx
+            high=np.array([1000e3, 10000, 10000, 1, 1], dtype=np.float32),  # Added vx
+            dtype=np.float32
+        )
+
         # Realistic Falcon 9 first stage parameters
         self.rocket_params = {
             'dry_mass': 22800,  # Updated: First stage dry mass
@@ -607,16 +626,18 @@ class FixedRocketEnvironment(gym.Env):
         if seed is not None:
             np.random.seed(seed)
 
-        # Initial state
+        # Initial state with horizontal components
         self.altitude = 0.0
-        self.velocity = 0.0
-        self.mass = self.initial_total_mass  # Start with full mass
+        self.x = 0.0  # Horizontal position
+        self.vz = 0.0  # Vertical velocity (rename from self.velocity)
+        self.vx = 0.0  # Horizontal velocity
+        self.mass = self.initial_total_mass
         self.time = 0.0
         self.step_count = 0
         self.fuel_used = 0.0
         self.has_lifted_off = False
 
-        # Reset stage management
+        # Stage management
         self.first_stage_active = True
         self.second_stage_active = False
         self.stage_separated = False
@@ -628,32 +649,31 @@ class FixedRocketEnvironment(gym.Env):
         return obs, {}
 
     def get_observation(self):
-        # Enhanced observation with stage info
+        # Enhanced observation with horizontal velocity
         if self.first_stage_active:
-            # First stage fuel calculation
             current_fuel = self.mass - (self.rocket_params['dry_mass'] +
                                         self.rocket_params['second_stage_dry_mass'] +
                                         self.rocket_params['second_stage_fuel'])
             total_fuel = self.rocket_params['fuel_mass']
-            stage_indicator = 1.0  # First stage
+            stage_indicator = 1.0
         elif self.second_stage_active:
-            # Second stage fuel calculation
             current_fuel = self.mass - self.rocket_params['second_stage_dry_mass']
             total_fuel = self.rocket_params['second_stage_fuel']
-            stage_indicator = 0.0  # Second stage
+            stage_indicator = 0.0
         else:
-            # Coasting phase
             current_fuel = 0
             total_fuel = 1
             stage_indicator = -1.0
 
         mass_ratio = current_fuel / total_fuel if total_fuel > 0 else 0
 
+        # ADD HORIZONTAL VELOCITY TO OBSERVATION:
         obs = np.array([
-            self.altitude / 1000e3,
-            self.velocity / 10000,
-            mass_ratio,
-            stage_indicator
+            self.altitude / 1000e3,  # Normalized altitude
+            self.vz / 10000,  # Normalized vertical velocity
+            self.vx / 10000,  # Normalized horizontal velocity ← ADD THIS
+            mass_ratio,  # Fuel ratio
+            stage_indicator  # Stage indicator
         ], dtype=np.float32)
 
         return obs
@@ -673,50 +693,76 @@ class FixedRocketEnvironment(gym.Env):
         self.step_count += 1
         self.time += self.dt
 
-        # Handle stage separation - ADD THIS
+        # Handle stage separation
         if (self.first_stage_active and
                 self.altitude >= self.stage_separation_altitude and
                 not self.stage_separated):
             self.separate_stages()
 
+        # ENHANCED ACTION SPACE - ADD PITCH CONTROL:
         throttle = np.clip(action[0], 0.0, 1.0)
+        pitch = np.clip(action[1], -1.0, 1.0) if len(action) > 1 else 0.0  # Default to vertical
 
-        # Determine which stage is active and calculate thrust accordingly
+        # Convert pitch to radians (-1 = -90°, 0 = 0°, 1 = 90°)
+        pitch_angle = pitch * (np.pi / 2)  # -90° to +90°
+
+        # Determine which stage is active
         if self.first_stage_active:
             thrust, mdot = self.calculate_first_stage_thrust(throttle)
         elif self.second_stage_active:
             thrust, mdot = self.calculate_second_stage_thrust(throttle)
         else:
-            thrust, mdot = 0, 0  # Coasting phase
+            thrust, mdot = 0, 0
 
-        # Check if we have fuel (existing logic)
-        current_fuel = self.mass - self.rocket_params['dry_mass']
-        if current_fuel <= 0:
-            thrust = 0
-            mdot = 0
+        # SPLIT THRUST INTO VERTICAL AND HORIZONTAL COMPONENTS:
+        thrust_v = thrust * np.cos(pitch_angle)  # Vertical component
+        thrust_h = thrust * np.sin(pitch_angle)  # Horizontal component
 
-        # Rest of your existing physics calculations remain the SAME
+        # GRAVITY TURNS - automatically pitch over during ascent
+        if self.altitude > 10000 and self.altitude < 80000:  # Between 10-80km
+            # Gradual gravity turn - pitch from vertical to horizontal
+            auto_pitch = 1.0 - (self.altitude / 80000)  # 1.0 at 10km, 0.0 at 80km
+            thrust_v = thrust * np.cos(auto_pitch * np.pi / 2)
+            thrust_h = thrust * np.sin(auto_pitch * np.pi / 2)
+
+        # PHYSICS CALCULATIONS FOR BOTH DIRECTIONS:
+
+        # Vertical forces
         gravity_force = self.mass * 9.8
 
-        if self.altitude > 0 and abs(self.velocity) > 0:
+        if self.altitude > 0 and abs(self.vz) > 0:
             density = 1.225 * np.exp(-self.altitude / 8500)
-            drag_force = 0.5 * density * self.velocity ** 2 * \
-                         self.rocket_params['drag_coeff'] * self.rocket_params['cross_section']
-            if self.velocity > 0:
-                drag_force = -drag_force
-            else:
-                drag_force = abs(drag_force)
+            drag_force_v = 0.5 * density * self.vz ** 2 * \
+                           self.rocket_params['drag_coeff'] * self.rocket_params['cross_section']
+            drag_force_v = -drag_force_v if self.vz > 0 else abs(drag_force_v)
         else:
-            drag_force = 0
+            drag_force_v = 0
 
-        net_force = thrust - gravity_force + drag_force
-        acceleration = net_force / self.mass
+        net_force_v = thrust_v - gravity_force + drag_force_v
+        acceleration_v = net_force_v / self.mass
 
-        new_velocity = self.velocity + acceleration * self.dt
-        new_altitude = self.altitude + self.velocity * self.dt + 0.5 * acceleration * self.dt ** 2
+        # Horizontal forces
+        if self.altitude > 0 and abs(self.vx) > 0:
+            density = 1.225 * np.exp(-self.altitude / 8500)
+            drag_force_h = 0.5 * density * self.vx ** 2 * \
+                           self.rocket_params['drag_coeff'] * self.rocket_params['cross_section']
+            drag_force_h = -drag_force_h if self.vx > 0 else abs(drag_force_h)
+        else:
+            drag_force_h = 0
+
+        net_force_h = thrust_h + drag_force_h  # No gravity in horizontal
+        acceleration_h = net_force_h / self.mass
+
+        # UPDATE VELOCITIES AND POSITIONS:
+        new_vz = self.vz + acceleration_v * self.dt
+        new_vx = self.vx + acceleration_h * self.dt
+
+        new_altitude = self.altitude + self.vz * self.dt + 0.5 * acceleration_v * self.dt ** 2
+        new_x = self.x + self.vx * self.dt + 0.5 * acceleration_h * self.dt ** 2
+
         new_mass = self.mass - mdot * self.dt
 
-        # Enhanced mass limits for staging
+        # Mass limits (same as before)
         if self.first_stage_active:
             min_mass = (self.rocket_params['dry_mass'] +
                         self.rocket_params['second_stage_dry_mass'] +
@@ -728,7 +774,6 @@ class FixedRocketEnvironment(gym.Env):
 
         if new_mass < min_mass:
             new_mass = min_mass
-            # Handle stage burnout
             if self.first_stage_active and new_mass <= min_mass:
                 if not self.stage_separated:
                     self.separate_stages()
@@ -736,45 +781,46 @@ class FixedRocketEnvironment(gym.Env):
                 self.second_stage_active = False
 
         # Update state
-        self.velocity = new_velocity
+        self.vz = new_vz
+        self.vx = new_vx
         self.altitude = max(new_altitude, 0.0)
+        self.x = new_x
         self.mass = new_mass
         self.fuel_used += mdot * self.dt
 
-        # Check if we've lifted off
+        # Calculate total velocity for orbit
+        total_velocity = np.sqrt(self.vx ** 2 + self.vz ** 2)
+
         if self.altitude > 0.1 and not self.has_lifted_off:
             self.has_lifted_off = True
             print(f"LIFT-OFF! at step {self.step_count}")
 
         self.record_state()
 
-        # Calculate reward
-        reward, done = self.calculate_reward()
+        # Calculate reward with horizontal velocity focus
+        reward, done = self.calculate_reward(total_velocity)
 
-        # Check termination conditions
-        if self.altitude <= 0 and self.velocity < -1.0:
-            reward = -10
+        # Termination conditions
+        if self.altitude <= 0 and self.vz < -1.0:
+            reward = -100
             done = True
-            if self.step_count == 1:
-                print(f"Immediate crash - throttle was {throttle:.2f}")
 
         if self.step_count >= self.max_steps:
             done = True
 
         current_fuel = self.mass - self.rocket_params['dry_mass']
         if current_fuel <= 0 and not done:
-            reward = self.final_reward()
+            reward = self.final_reward(total_velocity)
             done = True
 
         truncated = False
 
-        # Enhanced debug info with stage info
-        if self.step_count <= 3 or (
-                self.step_count <= 10 and self.step_count % 2 == 0) or self.step_count % 100 == 0 or done:
+        # Enhanced debug info with horizontal velocity
+        if self.step_count <= 3 or self.step_count % 200 == 0 or done:
             stage = "1st" if self.first_stage_active else "2nd" if self.second_stage_active else "COAST"
             status = "CRASHED" if done and self.altitude <= 0 else "FLYING"
-            print(
-                f"Step {self.step_count} [{stage}]: throttle={throttle:.2f}, alt={self.altitude:.1f}m, vel={self.velocity:.1f}m/s, mass={self.mass:.0f}kg, reward={reward:.2f} [{status}]")
+            print(f"Step {self.step_count} [{stage}]: Vx={self.vx:.0f}m/s, Vz={self.vz:.0f}m/s, "
+                  f"Total V={total_velocity:.0f}m/s, alt={self.altitude / 1000:.1f}km, reward={reward:.2f}")
 
         obs = self.get_observation()
         return obs, reward, done, truncated, {}
@@ -828,41 +874,43 @@ class FixedRocketEnvironment(gym.Env):
             print(f"🚀 STAGE SEPARATION at {self.altitude / 1000:.1f}km! Second stage ignition!")
 
     # Enhanced reward function for staging
-    def calculate_reward(self):
+    def calculate_reward(self, total_velocity):
         reward = 0
 
-        # Heavy penalty for crashing
-        if self.altitude <= 0 and self.velocity < -1.0:
-            return -50, True
+        if self.altitude <= 0 and self.vz < -1.0:
+            return -100, True
 
-        # Base survival reward
-        reward += 0.01
+        reward += 0.001
 
-        # Altitude reward (scaled for orbital target)
-        altitude_reward = (self.altitude / self.target_altitude) * 20
-        reward += altitude_reward
+        # MAJOR CHANGE: Reward horizontal velocity much more aggressively
+        horizontal_velocity_ratio = self.vx / self.orbital_velocity
+        if horizontal_velocity_ratio > 0:
+            # Massive reward for horizontal velocity - this is key for orbit!
+            reward += horizontal_velocity_ratio * 200
 
-        # Velocity reward - CRITICAL for orbit
-        if self.velocity > 0:
-            velocity_bonus = (self.velocity / self.orbital_velocity) * 50
-            reward += velocity_bonus
+        # Still reward altitude but less importantly
+        altitude_ratio = self.altitude / self.target_altitude
+        reward += altitude_ratio * 20
 
-        # Stage separation bonus - ADD THIS
+        # Reward total velocity (orbital speed)
+        total_velocity_ratio = total_velocity / self.orbital_velocity
+        reward += total_velocity_ratio * 50
+
+        # Stage separation bonus
         if self.stage_separated and not hasattr(self, 'separation_bonus_given'):
-            reward += 500  # Big bonus for successful staging
+            reward += 500
             self.separation_bonus_given = True
 
-        # Orbital energy reward (combines altitude and velocity)
-        if self.altitude > 100e3:
-            orbital_energy = (0.5 * self.velocity ** 2 - 3.986e14 / (self.altitude + 6371e3))
-            reward += orbital_energy * 1e-7
+        # Orbital insertion bonus - focus on horizontal velocity at high altitude
+        if self.altitude > 150e3 and self.vx > self.orbital_velocity * 0.8:
+            reward += 1000
 
-        # Success bonuses
-        if self.altitude >= 100e3:
-            reward += 100
-        if self.altitude >= self.target_altitude and self.velocity >= self.orbital_velocity * 0.9:
-            reward += 10000
-            print(f"ORBIT ACHIEVED! Altitude: {self.altitude / 1000:.1f}km, Velocity: {self.velocity:.1f}m/s")
+        # Success condition - MUST have high horizontal velocity
+        if (self.altitude >= self.target_altitude and
+                self.vx >= self.orbital_velocity * 0.9):  # Focus on horizontal velocity
+            reward += 100000
+            print(f"ORBIT ACHIEVED! Altitude: {self.altitude / 1000:.1f}km, "
+                  f"Horizontal Velocity: {self.vx:.1f}m/s")
             return reward, True
 
         return reward, False
@@ -1264,6 +1312,23 @@ class OrbitalRocketTrainer:
         self.episode_rewards = []
         self.max_altitudes = []
         self.max_velocities = []  # ADD THIS LINE
+
+    def save_checkpoint(self, episode):
+        """Save training checkpoint"""
+        checkpoint = {
+            'episode': episode,
+            'episode_rewards': self.episode_rewards,
+            'max_altitudes': self.max_altitudes,
+            'max_velocities': self.max_velocities,
+            'agent_state': {
+                'actor_state_dict': self.agent.actor.state_dict(),
+                'critic_state_dict': self.agent.critic.state_dict(),
+                'actor_optimizer_state_dict': self.agent.actor_optimizer.state_dict(),
+                'critic_optimizer_state_dict': self.agent.critic_optimizer.state_dict(),
+            }
+        }
+        torch.save(checkpoint, f'training_checkpoint_episode_{episode}.pth')
+        print(f"💾 Checkpoint saved at episode {episode}")
 
     def train(self, num_episodes=1000, save_interval=100):
         print("Starting ORBITAL rocket training...")
