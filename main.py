@@ -572,8 +572,8 @@ class FixedRocketEnvironment(gym.Env):
 
         # Action space: [throttle, gimbal_angle] - now 2D for vertical and horizontal control
         self.action_space = spaces.Box(
-            low=np.array([0.0, -0.2], dtype=np.float32),  # throttle, gimbal angle (radians)
-            high=np.array([1.0, 0.2], dtype=np.float32),
+            low=np.array([0.0, -0.3], dtype=np.float32),  # throttle, gimbal angle (radians)
+            high=np.array([1.0, 0.3], dtype=np.float32),
             dtype=np.float32
         )
 
@@ -603,6 +603,20 @@ class FixedRocketEnvironment(gym.Env):
             f"   Stage 2: {self.rocket_params['second_stage_dry_mass'] / 1000:.0f}t dry, {self.rocket_params['second_stage_fuel'] / 1000:.0f}t fuel")
 
         self.reset()
+
+    def should_separate_stages(self):
+        """Determine if we should separate stages"""
+        # Separate when we have sufficient velocity OR reach altitude
+        sufficient_velocity = self.velocity_horizontal > 2000  # Start turn earlier
+        sufficient_altitude = self.altitude >= self.stage_separation_altitude
+
+        return (sufficient_velocity or sufficient_altitude) and not self.stage_separated
+
+    def get_initial_gimbal_bias(self):
+        """Provide a small initial gimbal bias to encourage turning"""
+        if self.altitude < 10000:  # In first 10km
+            return 0.05  # Small right-turn bias
+        return 0.0
 
     def reset(self, seed=None, options=None):
         if seed is not None:
@@ -683,14 +697,17 @@ class FixedRocketEnvironment(gym.Env):
         self.step_count += 1
         self.time += self.dt
 
-        # Handle stage separation
+        # NEW: Use the should_separate_stages method instead of just altitude check
         if (self.first_stage_active and
-                self.altitude >= self.stage_separation_altitude and
+                self.should_separate_stages() and
                 not self.stage_separated):
             self.separate_stages()
 
         throttle = np.clip(action[0], 0.0, 1.0)
-        gimbal_angle = np.clip(action[1], -0.2, 0.2)  # Gimbal for horizontal control
+        gimbal_angle_raw = np.clip(action[1], -0.3, 0.3)  # Gimbal for horizontal control
+
+        # NEW: Apply initial gimbal bias to encourage turning
+        gimbal_angle = np.clip(gimbal_angle_raw + self.get_initial_gimbal_bias(), -0.3, 0.3)
 
         # Determine which stage is active and calculate thrust accordingly
         if self.first_stage_active:
@@ -869,74 +886,106 @@ class FixedRocketEnvironment(gym.Env):
 
         # Heavy penalty for crashing
         if self.altitude <= 0 and self.velocity_vertical < -1.0:
-            return -50, True
+            return -100, True
 
-        # Base survival reward
-        reward += 0.01
+        # Base survival reward (smaller to prioritize velocity)
+        reward += 0.001
 
-        # Altitude reward
-        altitude_reward = (self.altitude / self.target_altitude) * 20
+        # ALTITUDE REWARDS (reduce these to prioritize horizontal velocity)
+        altitude_reward = (self.altitude / self.target_altitude) * 5  # Reduced from 20
         reward += altitude_reward
 
-        # Velocity rewards - now separate for vertical and horizontal
+        # HORIZONTAL VELOCITY REWARDS (greatly increased)
         total_velocity = np.sqrt(self.velocity_vertical ** 2 + self.velocity_horizontal ** 2)
 
-        # Reward for building horizontal velocity (critical for orbit)
+        # Primary horizontal velocity reward - much stronger
         if self.velocity_horizontal > 0:
-            horizontal_velocity_bonus = (self.velocity_horizontal / self.min_horizontal_velocity) * 30
+            horizontal_velocity_bonus = (
+                                                    self.velocity_horizontal / self.min_horizontal_velocity) * 100  # Increased from 30
             reward += horizontal_velocity_bonus
 
-        # Total velocity reward
+        # Bonus for high horizontal velocity relative to total velocity
+        if total_velocity > 500:  # Only when moving significantly
+            horizontal_ratio = self.velocity_horizontal / total_velocity
+
+            # STRONG rewards for good horizontal/vertical balance
+            if self.altitude > 50e3:  # Once above dense atmosphere
+                if horizontal_ratio > 0.7:
+                    reward += 50 * horizontal_ratio  # Strong bonus for good ratio
+                elif horizontal_ratio > 0.5:
+                    reward += 20 * horizontal_ratio
+
+            # EXTRA bonus for near-orbital horizontal velocity
+            if self.velocity_horizontal > 5000:
+                reward += (self.velocity_horizontal - 5000) / 100  # Scaling bonus
+
+        # Total velocity reward (secondary to horizontal)
         if total_velocity > 0:
-            velocity_bonus = (total_velocity / self.orbital_velocity) * 20
+            velocity_bonus = (total_velocity / self.orbital_velocity) * 10  # Reduced from 20
             reward += velocity_bonus
 
         # Stage separation bonus
         if self.stage_separated and not hasattr(self, 'separation_bonus_given'):
-            reward += 500
+            reward += 300  # Reduced slightly to prioritize velocity
             self.separation_bonus_given = True
 
-        # Orbital energy reward (more realistic)
-        if self.altitude > 100e3:
-            # Specific orbital energy: kinetic + potential
-            r = self.R_earth + self.altitude
-            orbital_energy = (0.5 * total_velocity ** 2 - 3.986e14 / r)
-            reward += orbital_energy * 1e-7
+        # Orbital energy reward - focus on horizontal component
+        if self.altitude > 80e3:  # Above most atmosphere
+            # Reward circular orbit energy (mostly horizontal)
+            if self.velocity_horizontal > 1000:
+                circular_orbit_velocity = np.sqrt(3.986e14 / (self.R_earth + self.altitude))
+                orbit_efficiency = 1.0 - abs(
+                    self.velocity_horizontal - circular_orbit_velocity) / circular_orbit_velocity
+                reward += 50 * max(0, orbit_efficiency)
 
-        # Efficiency bonus for good horizontal/vertical balance
-        if total_velocity > 1000:  # Only when moving significantly
-            horizontal_ratio = self.velocity_horizontal / total_velocity
-            # Ideal: mostly horizontal velocity once out of atmosphere
-            if self.altitude > 80e3 and horizontal_ratio > 0.8:
-                reward += 10 * horizontal_ratio
+        # Efficiency penalty for too much vertical velocity at high altitude
+        if self.altitude > 100e3 and self.velocity_vertical > 500:
+            # Should be mostly horizontal by now
+            reward -= (self.velocity_vertical - 500) * 0.01
 
-        # Success bonuses
-        if self.altitude >= 100e3:
-            reward += 100
+        # Progressive bonuses for velocity milestones
+        velocity_milestones = [1000, 3000, 5000, 7000]
+        for milestone in velocity_milestones:
+            if (not hasattr(self, f'milestone_{milestone}') and
+                    self.velocity_horizontal >= milestone):
+                setattr(self, f'milestone_{milestone}', True)
+                reward += milestone / 10  # 100, 300, 500, 700 bonus
+
+        # Success bonuses - REQUIRE horizontal velocity
+        if self.altitude >= 100e3 and self.velocity_horizontal > 2000:
+            reward += 50
 
         # Orbit achievement: need both altitude AND horizontal velocity
-        if (self.altitude >= self.target_altitude * 0.95 and
-                self.velocity_horizontal >= self.min_horizontal_velocity * 0.95):
+        orbit_altitude_ok = self.altitude >= self.target_altitude * 0.95
+        orbit_velocity_ok = self.velocity_horizontal >= self.min_horizontal_velocity * 0.95
+
+        if orbit_altitude_ok and orbit_velocity_ok:
             reward += 10000
             print(f"ORBIT ACHIEVED! Altitude: {self.altitude / 1000:.1f}km, "
                   f"Horizontal Velocity: {self.velocity_horizontal:.1f}m/s")
             return reward, True
+        elif orbit_altitude_ok and not orbit_velocity_ok:
+            # Close but no orbit - partial reward
+            reward += 1000 * (self.velocity_horizontal / self.min_horizontal_velocity)
 
         return reward, False
 
     def final_reward(self):
-        """Final reward when out of fuel"""
+        """Final reward when out of fuel - heavily weighted toward horizontal velocity"""
         total_velocity = np.sqrt(self.velocity_vertical ** 2 + self.velocity_horizontal ** 2)
 
-        if (self.altitude >= self.target_altitude and
-                self.velocity_horizontal >= self.min_horizontal_velocity):
-            return 1000
+        orbit_achieved = (self.altitude >= self.target_altitude * 0.95 and
+                          self.velocity_horizontal >= self.min_horizontal_velocity * 0.95)
+
+        if orbit_achieved:
+            return 5000
         else:
-            # Combined score based on altitude and horizontal velocity
+            # Much stronger weighting toward horizontal velocity
             altitude_score = self.altitude / self.target_altitude
             velocity_score = self.velocity_horizontal / self.min_horizontal_velocity
-            combined_score = (altitude_score + velocity_score) / 2
-            return combined_score * 500
+            # 70% weight to horizontal velocity, 30% to altitude
+            combined_score = (0.3 * altitude_score + 0.7 * velocity_score)
+            return combined_score * 1000
 
 
 class SimpleActorNetwork(nn.Module):
