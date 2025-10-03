@@ -928,7 +928,8 @@ class SimpleActorNetwork(nn.Module):
     def __init__(self, state_dim, action_dim, hidden_dim=64):
         super(SimpleActorNetwork, self).__init__()
 
-        self.fc1 = nn.Linear(state_dim, hidden_dim)
+        # CHANGE state_dim from 4 to 5:
+        self.fc1 = nn.Linear(5, hidden_dim)  # Now 5 input features
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
         self.fc3 = nn.Linear(hidden_dim, action_dim * 2)
 
@@ -952,7 +953,8 @@ class SimpleCriticNetwork(nn.Module):
     def __init__(self, state_dim, hidden_dim=64):
         super(SimpleCriticNetwork, self).__init__()
 
-        self.fc1 = nn.Linear(state_dim, hidden_dim)
+        # CHANGE state_dim from 4 to 5:
+        self.fc1 = nn.Linear(5, hidden_dim)  # Now 5 input features
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
         self.fc3 = nn.Linear(hidden_dim, 1)
 
@@ -972,9 +974,10 @@ class BetterActorNetwork(nn.Module):
     def __init__(self, state_dim, action_dim, hidden_dim=128):
         super(BetterActorNetwork, self).__init__()
 
+        # CHANGE state_dim from 4 to 5:
         self.net = nn.Sequential(
-            nn.Linear(state_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),  # Layer normalization for stability
+            nn.Linear(5, hidden_dim),  # Now 5 input features
+            nn.LayerNorm(hidden_dim),
             nn.Tanh(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
@@ -990,7 +993,7 @@ class BetterActorNetwork(nn.Module):
         # Better initialization
         nn.init.orthogonal_(self.mean_head.weight, gain=0.01)
         nn.init.constant_(self.mean_head.bias, 0.0)
-        nn.init.constant_(self.log_std_head.bias, -1.0)  # Start with higher exploration
+        nn.init.constant_(self.log_std_head.bias, -1.0)
 
     def forward(self, x):
         features = self.net(x)
@@ -1030,6 +1033,8 @@ class BetterCriticNetwork(nn.Module):
 class SimplePPOAgent:
     def __init__(self, state_dim, action_dim, lr=3e-4, gamma=0.99, gae_lambda=0.95,
                  clip_epsilon=0.2, ppo_epochs=10, batch_size=128, use_better_networks=True):  # Add option
+        self.state_dim = 5  # Now 5 observation features
+        self.action_dim = 2  # Now 2 actions: [throttle, pitch]
         self.state_dim = state_dim
         self.action_dim = action_dim
 
@@ -1302,11 +1307,10 @@ class OrbitalRocketEnvironment(FixedRocketEnvironment):
 
 class OrbitalRocketTrainer:
     def __init__(self, rocket_params=None):
-        # Use OrbitalRocketEnvironment for orbital training
         self.env = OrbitalRocketEnvironment(rocket_params)
         self.agent = SimplePPOAgent(
-            state_dim=self.env.observation_space.shape[0],
-            action_dim=self.env.action_space.shape[0]
+            state_dim=self.env.observation_space.shape[0],  # This should be 5 now
+            action_dim=self.env.action_space.shape[0]       # This should be 2 now
         )
 
         self.episode_rewards = []
