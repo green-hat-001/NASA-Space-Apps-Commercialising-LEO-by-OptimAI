@@ -540,13 +540,18 @@ class FixedRocketEnvironment(gym.Env):
 
         # Realistic Falcon 9 first stage parameters
         self.rocket_params = {
-            'dry_mass': 25600,  # kg
-            'fuel_mass': 411000,  # kg
-            'thrust': 7600e3,  # N (7.6 MN total)
-            'isp': 282,  # s (sea level)
-            'burn_time': 162,
+            'dry_mass': 22800,  # Updated: First stage dry mass
+            'fuel_mass': 410000,  # Updated: First stage fuel
+            'thrust': 7600e3,
+            'isp': 282,
+            # Second stage parameters
+            'second_stage_dry_mass': 9500,
+            'second_stage_fuel': 110000,
+            'second_stage_thrust': 934e3,
+            'second_stage_isp': 348,
             'drag_coeff': 0.5,
             'cross_section': 10.9,
+            'burn_time': 162,
         }
 
         if rocket_params:
@@ -556,111 +561,147 @@ class FixedRocketEnvironment(gym.Env):
         self.g0 = 9.80665  # m/s²
         self.R_earth = 6371e3  # m
 
-        # Target - start with a low target to ensure success
-        self.target_altitude = 10e3  # Only 10km to start
-        self.orbital_velocity = 7800  # m/s for LEO - ADD THIS LINE
+        # Target
+        self.target_altitude = 400e3  # Higher target for two-stage
+        self.orbital_velocity = 7800
 
         # Environment parameters
         self.max_steps = 2000
-        self.dt = 0.1  # Smaller time step for stability
+        self.dt = 0.1
 
         # Action space: [throttle]
         self.action_space = spaces.Box(
-            low=np.array([0.0], dtype=np.float32),  # throttle only
+            low=np.array([0.0], dtype=np.float32),
             high=np.array([1.0], dtype=np.float32),
             dtype=np.float32
         )
 
-        self.vx = 0.0
-        self.vz = 0.0
+        # Stage management - ADD THIS
+        self.first_stage_active = True
+        self.second_stage_active = False
+        self.stage_separated = False
+        self.stage_separation_altitude = 80e3  # Separate at 80km
 
-        # Observation space: [altitude, velocity, mass_ratio]
+        # Calculate total initial mass (both stages)
+        self.initial_total_mass = (self.rocket_params['dry_mass'] +
+                                   self.rocket_params['fuel_mass'] +
+                                   self.rocket_params['second_stage_dry_mass'] +
+                                   self.rocket_params['second_stage_fuel'])
+
+        # Update observation space to include stage info
         self.observation_space = spaces.Box(
-            low=np.array([0, -1000, 0], dtype=np.float32),
-            high=np.array([1000e3, 10000, 1], dtype=np.float32),
+            low=np.array([0, -1000, 0, -1], dtype=np.float32),  # Added 4th dimension
+            high=np.array([1000e3, 10000, 1, 1], dtype=np.float32),
             dtype=np.float32
         )
 
-        print("Environment initialized")
-        total_mass = self.rocket_params['dry_mass'] + self.rocket_params['fuel_mass']
-        twr = self.rocket_params['thrust'] / (total_mass * self.g0)
-        print(f"Thrust-to-weight ratio: {twr:.2f}")
+        print("🚀 Two-stage rocket environment initialized")
+        print(
+            f"   Stage 1: {self.rocket_params['dry_mass'] / 1000:.0f}t dry, {self.rocket_params['fuel_mass'] / 1000:.0f}t fuel")
+        print(
+            f"   Stage 2: {self.rocket_params['second_stage_dry_mass'] / 1000:.0f}t dry, {self.rocket_params['second_stage_fuel'] / 1000:.0f}t fuel")
 
         self.reset()
 
-    # FIX THE RESET METHOD SIGNATURE
     def reset(self, seed=None, options=None):
         if seed is not None:
             np.random.seed(seed)
 
-        # Initial state - CRITICAL FIX: Start with proper initial conditions
-        self.altitude = 0.0  # Start at ground level
-        self.velocity = 0.0  # Start with zero velocity
-        self.mass = self.rocket_params['dry_mass'] + self.rocket_params['fuel_mass']
+        # Initial state
+        self.altitude = 0.0
+        self.velocity = 0.0
+        self.mass = self.initial_total_mass  # Start with full mass
         self.time = 0.0
         self.step_count = 0
         self.fuel_used = 0.0
         self.has_lifted_off = False
 
+        # Reset stage management
+        self.first_stage_active = True
+        self.second_stage_active = False
+        self.stage_separated = False
+
         self.trajectory = []
         self.record_state()
 
         obs = self.get_observation()
-        info = {}  # Return empty info dict as required by Gymnasium
-        return obs, info
+        return obs, {}
+
+    def get_observation(self):
+        # Enhanced observation with stage info
+        if self.first_stage_active:
+            # First stage fuel calculation
+            current_fuel = self.mass - (self.rocket_params['dry_mass'] +
+                                        self.rocket_params['second_stage_dry_mass'] +
+                                        self.rocket_params['second_stage_fuel'])
+            total_fuel = self.rocket_params['fuel_mass']
+            stage_indicator = 1.0  # First stage
+        elif self.second_stage_active:
+            # Second stage fuel calculation
+            current_fuel = self.mass - self.rocket_params['second_stage_dry_mass']
+            total_fuel = self.rocket_params['second_stage_fuel']
+            stage_indicator = 0.0  # Second stage
+        else:
+            # Coasting phase
+            current_fuel = 0
+            total_fuel = 1
+            stage_indicator = -1.0
+
+        mass_ratio = current_fuel / total_fuel if total_fuel > 0 else 0
+
+        obs = np.array([
+            self.altitude / 1000e3,
+            self.velocity / 10000,
+            mass_ratio,
+            stage_indicator
+        ], dtype=np.float32)
+
+        return obs
 
     def record_state(self):
+        """Record the current state to trajectory history"""
         self.trajectory.append({
             'time': self.time,
             'altitude': self.altitude,
             'velocity': self.velocity,
-            'mass': self.mass
+            'mass': self.mass,
+            # Optional: Add stage info for debugging
+            'stage': '1st' if self.first_stage_active else '2nd' if self.second_stage_active else 'coast'
         })
-
-    def get_observation(self):
-        # Normalized observation
-        mass_ratio = (self.mass - self.rocket_params['dry_mass']) / self.rocket_params['fuel_mass']
-        obs = np.array([
-            self.altitude / 1000e3,  # Normalize to 0-1000 km
-            self.velocity / 10000,  # Normalize to ±10 km/s
-            mass_ratio  # Fuel remaining ratio (0-1)
-        ], dtype=np.float32)
-
-        return obs
 
     def step(self, action):
         self.step_count += 1
         self.time += self.dt
 
-        # Clip action
+        # Handle stage separation - ADD THIS
+        if (self.first_stage_active and
+                self.altitude >= self.stage_separation_altitude and
+                not self.stage_separated):
+            self.separate_stages()
+
         throttle = np.clip(action[0], 0.0, 1.0)
 
-        # Check if we have fuel
+        # Determine which stage is active and calculate thrust accordingly
+        if self.first_stage_active:
+            thrust, mdot = self.calculate_first_stage_thrust(throttle)
+        elif self.second_stage_active:
+            thrust, mdot = self.calculate_second_stage_thrust(throttle)
+        else:
+            thrust, mdot = 0, 0  # Coasting phase
+
+        # Check if we have fuel (existing logic)
         current_fuel = self.mass - self.rocket_params['dry_mass']
         if current_fuel <= 0:
             thrust = 0
             mdot = 0
-        else:
-            # Thrust and mass flow
-            thrust = self.rocket_params['thrust'] * throttle
-            mdot = thrust / (self.rocket_params['isp'] * self.g0)
 
-            # Don't use more fuel than available
-            fuel_used = mdot * self.dt
-            if fuel_used > current_fuel:
-                fuel_used = current_fuel
-                mdot = fuel_used / self.dt
-                thrust = mdot * self.rocket_params['isp'] * self.g0
-
-        # Gravity (constant for now)
+        # Rest of your existing physics calculations remain the SAME
         gravity_force = self.mass * 9.8
 
-        # Only apply drag when moving and above ground
         if self.altitude > 0 and abs(self.velocity) > 0:
             density = 1.225 * np.exp(-self.altitude / 8500)
             drag_force = 0.5 * density * self.velocity ** 2 * \
                          self.rocket_params['drag_coeff'] * self.rocket_params['cross_section']
-            # Drag opposes motion
             if self.velocity > 0:
                 drag_force = -drag_force
             else:
@@ -668,26 +709,35 @@ class FixedRocketEnvironment(gym.Env):
         else:
             drag_force = 0
 
-        # Net force - thrust upward, gravity downward, drag opposes motion
         net_force = thrust - gravity_force + drag_force
-
-        # Acceleration
         acceleration = net_force / self.mass
 
-        # Update velocity and position using simple Euler integration
         new_velocity = self.velocity + acceleration * self.dt
         new_altitude = self.altitude + self.velocity * self.dt + 0.5 * acceleration * self.dt ** 2
-
-        # Update mass
         new_mass = self.mass - mdot * self.dt
 
-        # Ensure mass doesn't go below dry mass
-        if new_mass < self.rocket_params['dry_mass']:
-            new_mass = self.rocket_params['dry_mass']
+        # Enhanced mass limits for staging
+        if self.first_stage_active:
+            min_mass = (self.rocket_params['dry_mass'] +
+                        self.rocket_params['second_stage_dry_mass'] +
+                        self.rocket_params['second_stage_fuel'])
+        elif self.second_stage_active:
+            min_mass = self.rocket_params['second_stage_dry_mass']
+        else:
+            min_mass = self.rocket_params['second_stage_dry_mass']
+
+        if new_mass < min_mass:
+            new_mass = min_mass
+            # Handle stage burnout
+            if self.first_stage_active and new_mass <= min_mass:
+                if not self.stage_separated:
+                    self.separate_stages()
+            elif self.second_stage_active and new_mass <= self.rocket_params['second_stage_dry_mass']:
+                self.second_stage_active = False
 
         # Update state
         self.velocity = new_velocity
-        self.altitude = max(new_altitude, 0.0)  # Don't go below ground
+        self.altitude = max(new_altitude, 0.0)
         self.mass = new_mass
         self.fuel_used += mdot * self.dt
 
@@ -702,8 +752,8 @@ class FixedRocketEnvironment(gym.Env):
         reward, done = self.calculate_reward()
 
         # Check termination conditions
-        if self.altitude <= 0 and self.velocity < -1.0:  # Only crash if moving downward fast
-            reward = -10  # Reduced penalty
+        if self.altitude <= 0 and self.velocity < -1.0:
+            reward = -10
             done = True
             if self.step_count == 1:
                 print(f"Immediate crash - throttle was {throttle:.2f}")
@@ -711,81 +761,107 @@ class FixedRocketEnvironment(gym.Env):
         if self.step_count >= self.max_steps:
             done = True
 
+        current_fuel = self.mass - self.rocket_params['dry_mass']
         if current_fuel <= 0 and not done:
-            # Out of fuel but didn't crash or succeed yet
             reward = self.final_reward()
             done = True
 
         truncated = False
 
-        # Debug first few steps and occasional steps
+        # Enhanced debug info with stage info
         if self.step_count <= 3 or (
                 self.step_count <= 10 and self.step_count % 2 == 0) or self.step_count % 100 == 0 or done:
+            stage = "1st" if self.first_stage_active else "2nd" if self.second_stage_active else "COAST"
             status = "CRASHED" if done and self.altitude <= 0 else "FLYING"
             print(
-                f"Step {self.step_count}: throttle={throttle:.2f}, alt={self.altitude:.1f}m, vel={self.velocity:.1f}m/s, mass={self.mass:.0f}kg, reward={reward:.2f} [{status}]")
+                f"Step {self.step_count} [{stage}]: throttle={throttle:.2f}, alt={self.altitude:.1f}m, vel={self.velocity:.1f}m/s, mass={self.mass:.0f}kg, reward={reward:.2f} [{status}]")
 
         obs = self.get_observation()
-
-        if self.step_count % 200 == 0 or done:
-            thrust_to_weight = thrust / (self.mass * 9.8) if thrust > 0 else 0
-            print(f"Step {self.step_count}: throttle={throttle:.2f}, TWR={thrust_to_weight:.2f}, "
-                  f"alt={self.altitude / 1000:.1f}km, vel={self.velocity:.0f}m/s, "
-                  f"mass={self.mass:.0f}kg, reward={reward:.1f}")
-
         return obs, reward, done, truncated, {}
 
+    # ADD THESE NEW METHODS FOR STAGE MANAGEMENT:
+    def calculate_first_stage_thrust(self, throttle):
+        """Calculate thrust and mass flow for first stage"""
+        current_fuel = self.mass - (self.rocket_params['dry_mass'] +
+                                    self.rocket_params['second_stage_dry_mass'] +
+                                    self.rocket_params['second_stage_fuel'])
+        if current_fuel <= 0:
+            return 0, 0
+
+        thrust = self.rocket_params['thrust'] * throttle
+        mdot = thrust / (self.rocket_params['isp'] * self.g0)
+
+        fuel_used = mdot * self.dt
+        if fuel_used > current_fuel:
+            fuel_used = current_fuel
+            mdot = fuel_used / self.dt
+            thrust = mdot * self.rocket_params['isp'] * self.g0
+
+        return thrust, mdot
+
+    def calculate_second_stage_thrust(self, throttle):
+        """Calculate thrust and mass flow for second stage"""
+        current_fuel = self.mass - self.rocket_params['second_stage_dry_mass']
+        if current_fuel <= 0:
+            return 0, 0
+
+        thrust = self.rocket_params['second_stage_thrust'] * throttle
+        mdot = thrust / (self.rocket_params['second_stage_isp'] * self.g0)
+
+        fuel_used = mdot * self.dt
+        if fuel_used > current_fuel:
+            fuel_used = current_fuel
+            mdot = fuel_used / self.dt
+            thrust = mdot * self.rocket_params['second_stage_isp'] * self.g0
+
+        return thrust, mdot
+
+    def separate_stages(self):
+        """Separate first stage and activate second stage"""
+        if self.first_stage_active and not self.stage_separated:
+            # Jettison first stage - mass becomes just second stage
+            self.mass = (self.rocket_params['second_stage_dry_mass'] +
+                         self.rocket_params['second_stage_fuel'])
+            self.first_stage_active = False
+            self.second_stage_active = True
+            self.stage_separated = True
+            print(f"🚀 STAGE SEPARATION at {self.altitude / 1000:.1f}km! Second stage ignition!")
+
+    # Enhanced reward function for staging
     def calculate_reward(self):
         reward = 0
 
         # Heavy penalty for crashing
         if self.altitude <= 0 and self.velocity < -1.0:
-            return -100, True
+            return -50, True
 
-        # Base survival reward (smaller)
-        reward += 0.001
+        # Base survival reward
+        reward += 0.01
 
-        # Progressive altitude rewards - much more aggressive
-        altitude_ratio = self.altitude / self.target_altitude
-        if altitude_ratio < 0.3:
-            altitude_reward = altitude_ratio * 10
-        elif altitude_ratio < 0.7:
-            altitude_reward = altitude_ratio * 30
-        else:
-            altitude_reward = altitude_ratio * 100  # Massive reward for high altitudes
-
+        # Altitude reward (scaled for orbital target)
+        altitude_reward = (self.altitude / self.target_altitude) * 20
         reward += altitude_reward
 
-        # Velocity reward - critical for orbit
+        # Velocity reward - CRITICAL for orbit
         if self.velocity > 0:
-            velocity_ratio = self.velocity / self.orbital_velocity
-            if velocity_ratio < 0.3:
-                velocity_bonus = velocity_ratio * 20
-            elif velocity_ratio < 0.7:
-                velocity_bonus = velocity_ratio * 50
-            else:
-                velocity_bonus = velocity_ratio * 150  # Huge bonus near orbital velocity
+            velocity_bonus = (self.velocity / self.orbital_velocity) * 50
             reward += velocity_bonus
 
-        # Progress tracking for altitude records
-        if not hasattr(self, 'max_altitude_reached'):
-            self.max_altitude_reached = 0
+        # Stage separation bonus - ADD THIS
+        if self.stage_separated and not hasattr(self, 'separation_bonus_given'):
+            reward += 500  # Big bonus for successful staging
+            self.separation_bonus_given = True
 
-        if self.altitude > self.max_altitude_reached:
-            progress_bonus = (self.altitude - self.max_altitude_reached) / 1000 * 10
-            reward += progress_bonus
-            self.max_altitude_reached = self.altitude
-
-        # Efficiency bonus (fuel conservation)
-        fuel_remaining = (self.mass - self.rocket_params['dry_mass']) / self.rocket_params['fuel_mass']
-        if fuel_remaining > 0.1:  # Only reward if we have significant fuel left
-            reward += fuel_remaining * 5
+        # Orbital energy reward (combines altitude and velocity)
+        if self.altitude > 100e3:
+            orbital_energy = (0.5 * self.velocity ** 2 - 3.986e14 / (self.altitude + 6371e3))
+            reward += orbital_energy * 1e-7
 
         # Success bonuses
-        if self.altitude >= 100e3:  # Kármán line
-            reward += 500
+        if self.altitude >= 100e3:
+            reward += 100
         if self.altitude >= self.target_altitude and self.velocity >= self.orbital_velocity * 0.9:
-            reward += 100000  # Massive success bonus
+            reward += 10000
             print(f"ORBIT ACHIEVED! Altitude: {self.altitude / 1000:.1f}km, Velocity: {self.velocity:.1f}m/s")
             return reward, True
 
@@ -796,9 +872,8 @@ class FixedRocketEnvironment(gym.Env):
         if self.altitude >= self.target_altitude:
             return 1000
         else:
-            # Partial credit based on altitude achieved
             altitude_ratio = self.altitude / self.target_altitude
-            return altitude_ratio * 200  # Reduced but still significant
+            return altitude_ratio * 200
 
 
 class SimpleActorNetwork(nn.Module):
@@ -1190,7 +1265,7 @@ class OrbitalRocketTrainer:
         self.max_altitudes = []
         self.max_velocities = []  # ADD THIS LINE
 
-    def train(self, num_episodes=1000):
+    def train(self, num_episodes=1000, save_interval=100):
         print("Starting ORBITAL rocket training...")
 
         success_count = 0
@@ -1261,6 +1336,10 @@ class OrbitalRocketTrainer:
                     for param_group in self.agent.critic_optimizer.param_groups:
                         param_group['lr'] *= 0.8
                     print(f"Reduced learning rate to {self.agent.actor_optimizer.param_groups[0]['lr']:.2e}")
+
+            # Auto-save every N episodes
+            if episode % save_interval == 0 and episode > 0:
+                self.save_checkpoint(episode)
 
         # Final training plot
         plot_real_time_training(self, num_episodes)
@@ -1518,15 +1597,14 @@ def final_test(trainer, num_tests=10):
 if __name__ == "__main__":
     # Enhanced rocket parameters for orbital flight
     rocket_params = {
-        'dry_mass': 25600,          # 22800
-        'fuel_mass': 411000,        # 410000
+        'dry_mass': 22800,  # First stage dry mass
+        'fuel_mass': 410000,  # First stage fuel
         'thrust': 7600e3,
         'isp': 282,
-
-        # dry mass 2: 9500
-        # fuel_mass 2: 110000
-        # thrust 2: 934e3
-        # isp: 348
+        'second_stage_dry_mass': 9500,
+        'second_stage_fuel': 110000,
+        'second_stage_thrust': 934e3,
+        'second_stage_isp': 348,
     }
 
     # Choose which trainer to use
