@@ -789,6 +789,16 @@ class FixedRocketEnvironment(gym.Env):
         self.max_steps = 2000
         self.dt = 0.1
 
+        # Add pitch tracking
+        self.pitch_angle = 0.0  # radians, 0 = vertical, pi/2 = horizontal
+
+        # Enhanced observation space with pitch
+        self.observation_space = spaces.Box(
+            low=np.array([0, -1000, 0, -1000, -1, -np.pi / 2], dtype=np.float32),  # added pitch
+            high=np.array([1000e3, 10000, 10000, 1, 1, np.pi / 2], dtype=np.float32),
+            dtype=np.float32
+        )
+
         # Action space: [throttle, gimbal_angle] - now 2D for vertical and horizontal control
         self.action_space = spaces.Box(
             low=np.array([0.0, -0.3], dtype=np.float32),  # throttle, gimbal angle (radians)
@@ -812,6 +822,20 @@ class FixedRocketEnvironment(gym.Env):
         self.observation_space = spaces.Box(
             low=np.array([0, -1000, 0, -1000, -1], dtype=np.float32),  # alt, vel_v, vel_h, mass_ratio, stage
             high=np.array([1000e3, 10000, 10000, 1, 1], dtype=np.float32),
+            dtype=np.float32
+        )
+
+        # Action space: [throttle, gimbal_angle] - MUST BE 2D
+        self.action_space = spaces.Box(
+            low=np.array([0.0, -0.3], dtype=np.float32),  # throttle, gimbal angle
+            high=np.array([1.0, 0.3], dtype=np.float32),
+            dtype=np.float32
+        )
+
+        # Enhanced observation space with 7 dimensions
+        self.observation_space = spaces.Box(
+            low=np.array([0, -1000, 0, -1000, -1, -np.pi / 2, 0], dtype=np.float32),  # 7 dims
+            high=np.array([1000e3, 10000, 10000, 1, 1, np.pi / 2, 1], dtype=np.float32),
             dtype=np.float32
         )
 
@@ -862,8 +886,17 @@ class FixedRocketEnvironment(gym.Env):
         self.trajectory = []
         self.record_state()
 
+        # Reset pitch
+        self.pitch_angle = 0.0  # Start vertical
+
         obs = self.get_observation()
         return obs, {}
+
+    def get_initial_gimbal_bias(self):
+        """Provide a small initial gimbal bias to encourage turning"""
+        if self.altitude < 5000:  # Only in first 5km
+            return 0.02  # Small turn encouragement
+        return 0.0
 
     def get_observation(self):
         # Enhanced observation with stage info and horizontal velocity
@@ -884,15 +917,52 @@ class FixedRocketEnvironment(gym.Env):
 
         mass_ratio = current_fuel / total_fuel if total_fuel > 0 else 0
 
+        # Calculate weight component for normalization
+        weight_component = self.calculate_second_stage_weight_component()
+        max_weight = (self.rocket_params['second_stage_dry_mass'] +
+                      self.rocket_params['second_stage_fuel']) * 9.8
+        normalized_weight = weight_component / max_weight if max_weight > 0 else 0
+
         obs = np.array([
-            self.altitude / 1000e3,  # Normalized altitude
-            self.velocity_vertical / 10000,  # Normalized vertical velocity
-            self.velocity_horizontal / 10000,  # Normalized horizontal velocity
-            mass_ratio,
-            stage_indicator
+            self.altitude / 1000e3,  # dim 0
+            self.velocity_vertical / 10000,  # dim 1
+            self.velocity_horizontal / 10000,  # dim 2
+            mass_ratio,  # dim 3
+            stage_indicator,  # dim 4
+            self.pitch_angle / (np.pi / 2),  # dim 5 (normalized)
+            normalized_weight  # dim 6
         ], dtype=np.float32)
 
         return obs
+
+    def calculate_pitch_angle(self):
+        """Calculate pitch angle from velocity components"""
+        if abs(self.velocity_horizontal) < 0.1 and abs(self.velocity_vertical) < 0.1:
+            return 0.0  # Default to vertical if not moving
+
+        # Pitch angle is the angle from vertical
+        # 0 = straight up, pi/2 = horizontal
+        pitch = math.atan2(self.velocity_horizontal, self.velocity_vertical)
+
+        # Keep it within reasonable bounds
+        return np.clip(pitch, -np.pi / 2, np.pi / 2)
+
+    def calculate_second_stage_weight_component(self):
+        """Calculate mass * g * sin(pitch) for second stage weight estimation"""
+        if not self.second_stage_active:
+            return 0.0
+
+        # Second stage mass (current mass minus second stage dry mass)
+        second_stage_mass = self.mass - self.rocket_params['second_stage_dry_mass']
+
+        # Gravity at current altitude
+        gravity = self.calculate_gravity(self.altitude)
+
+        # Calculate the component: mass * gravity * sin(pitch)
+        # sin(pitch) gives the horizontal component of gravity
+        weight_component = second_stage_mass * gravity * math.sin(abs(self.pitch_angle))
+
+        return weight_component
 
     def record_state(self):
         """Record the current state to trajectory history"""
@@ -922,11 +992,14 @@ class FixedRocketEnvironment(gym.Env):
                 not self.stage_separated):
             self.separate_stages()
 
+        # Handle 2D action: [throttle, gimbal_angle]
         throttle = np.clip(action[0], 0.0, 1.0)
-        gimbal_angle_raw = np.clip(action[1], -0.3, 0.3)  # Gimbal for horizontal control
+        gimbal_angle_raw = np.clip(action[1], -0.3, 0.3)  # Now this won't error
 
-        # NEW: Apply initial gimbal bias to encourage turning
         gimbal_angle = np.clip(gimbal_angle_raw + self.get_initial_gimbal_bias(), -0.3, 0.3)
+
+        # Update pitch angle
+        self.pitch_angle = self.calculate_pitch_angle()
 
         # Determine which stage is active and calculate thrust accordingly
         if self.first_stage_active:
@@ -984,6 +1057,9 @@ class FixedRocketEnvironment(gym.Env):
         # Update positions
         new_altitude = self.altitude + self.velocity_vertical * self.dt + 0.5 * acceleration_vertical * self.dt ** 2
         self.distance_traveled += self.velocity_horizontal * self.dt
+
+        # Calculate second stage weight component for debugging/reward
+        second_stage_weight = self.calculate_second_stage_weight_component()
 
         # Update mass
         new_mass = self.mass - mdot * self.dt
@@ -1177,6 +1253,16 @@ class FixedRocketEnvironment(gym.Env):
         if self.altitude > 100e3 and self.velocity_vertical > 500:
             # Should be mostly horizontal by now
             reward -= (self.velocity_vertical - 500) * 0.01
+
+        # Bonus for efficient pitch management
+        second_stage_weight = self.calculate_second_stage_weight_component()
+        if self.second_stage_active:
+            # Reward for keeping the weight component reasonable
+            # Too high = too much gravity drag, too low = not building horizontal velocity
+            ideal_weight_component = 50000  # Adjust this value
+            weight_efficiency = 1.0 - min(1.0,
+                                          abs(second_stage_weight - ideal_weight_component) / ideal_weight_component)
+            reward += weight_efficiency * 5
 
         # Progressive bonuses for velocity milestones
         velocity_milestones = [1000, 3000, 5000, 7000]
@@ -1607,14 +1693,34 @@ class OrbitalRocketEnvironment(FixedRocketEnvironment):
         self.orbital_velocity = 7800  # m/s for LEO
         self.min_horizontal_velocity = 7600  # Most should be horizontal
 
+    def get_initial_gimbal_bias(self):
+        """Provide a small initial gimbal bias to encourage turning"""
+        if self.altitude < 5000:  # Reduced from 10km to 5km
+            return 0.02  # Reduced from 0.05 to 0.02 (much smaller)
+        return 0.0
+
+    def should_separate_stages(self):
+        """Determine if we should separate stages"""
+        # Only separate if we have POSITIVE horizontal velocity
+        sufficient_velocity = self.velocity_horizontal > 500  # Must be moving forward
+        sufficient_altitude = self.altitude >= self.stage_separation_altitude
+
+        # Also consider if first stage is nearly out of fuel
+        first_stage_fuel = self.mass - (self.rocket_params['dry_mass'] +
+                                        self.rocket_params['second_stage_dry_mass'] +
+                                        self.rocket_params['second_stage_fuel'])
+        fuel_low = first_stage_fuel < self.rocket_params['fuel_mass'] * 0.1  # 10% fuel remaining
+
+        return (sufficient_altitude and sufficient_velocity) or fuel_low
+
 
 class OrbitalRocketTrainer:
     def __init__(self, rocket_params=None):
         self.env = OrbitalRocketEnvironment(rocket_params)
-        # Update action dimension to 2 for throttle + gimbal
+        # Update action_dim to 2 for throttle + gimbal
         self.agent = SimplePPOAgent(
-            state_dim=self.env.observation_space.shape[0],
-            action_dim=self.env.action_space.shape[0]  # Now 2
+            state_dim=self.env.observation_space.shape[0],  # Should be 7
+            action_dim=self.env.action_space.shape[0]       # Should be 2
         )
 
         self.episode_rewards = []
@@ -1989,7 +2095,7 @@ if __name__ == "__main__":
     trainer = OrbitalRocketTrainer(rocket_params)
 
     print("🚀 Starting training...")
-    trainer.train(num_episodes=10000)
+    trainer.train(num_episodes=500)
     print("✅ Training completed!")
 
     print("📊 Running final performance tests...")
