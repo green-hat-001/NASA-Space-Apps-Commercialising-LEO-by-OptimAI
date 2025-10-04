@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Trigger app.py</title>
+</head>
+<body>
+    <h1>Run app.py</h1>
+    <form action="/" method="post">
+        <label for="input_value">Enter a value:</label>
+        <input type="text" name="input_value" id="input_value">
+        <button type="submit">Run Script</button>
+    </form>
+
+    {% if message %}
+    <h2>Result:</h2>
+    <pre>{{ message }}</pre>
+    {% endif %}
+</body>
+</html>

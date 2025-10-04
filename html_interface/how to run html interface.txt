@@ -1,0 +1,2 @@
+Run through terminal or command prompt. Run the file trigger.py and then enter this URL into your browser: http://127.0.0.1:5000
+

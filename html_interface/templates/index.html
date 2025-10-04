@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>AI hackathon site</title>
+    <style>
+
+      /* Smooth scrolling */
+      html {
+         scroll-behavior: smooth;
+      }
+      body{
+        background-color: white;
+        font-family: San Francisco, sans-serif;
+        text-align: center;
+        padding: 50px;
+      }
+
+      h1{
+        color: darkblue;
+        font-size: 48px;
+      }
+
+      p{
+        color: #333;
+        font-size: 20px;
+      }
+
+
+
+
+      button {
+        background-color: darkblue;
+        color: white;
+        border: none;
+        padding: 12px 24px;
+        font-size: 14px;
+        border-radius: 800px;
+        cursor: pointer;
+      }
+
+      button:hover{
+        background-color: #1b283d;
+      }
+
+
+
+
+
+      /* Two-column container */
+      .containerleft {
+        display: flex;
+        gap: 50px;
+        align-items: center;
+        justify-content: center;
+        margin-top: 50px; 
+      }
+
+      .containerleft > div {
+        width: 45%;
+        text-align: left; 
+        opacity: 0;                /* start invisible */
+        transform: translateX(-50px); /* start slightly left */
+        animation: fadeSlideIn 1.5s forwards;
+      }
+
+      /* Image comes from the right */
+      .containerleft > div:nth-child(2) {
+        transform: translateX(50px);  /* start slightly right */
+        animation-delay: 0.5s;
+      }
+
+      .containerleft img {
+        width: 100%;
+        height: auto;
+        border-radius: 10px; 
+      }
+
+      /* Fade + slide animation */
+      @keyframes fadeSlideIn {
+        to {
+          opacity: 1;
+          transform: translateX(0);
+        }
+      }
+
+ 
+
+
+    
+     /* Top navigation bar */
+     .topbar {
+       position: fixed; 
+       top: 0;
+       left: 0;
+       width: 100%;
+       padding: 10px 0;
+       display: flex;
+       justify-content: center;
+       gap: 10px;
+       z-index: 1000;
+
+     background: linear-gradient(
+       to bottom,
+       rgba(27,40,61,0.9),
+       rgba(255,255,255,0)
+     );
+    }
+
+    .topbar button {
+      background-color: grey;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      cursor: pointer;
+      border-radius: 10px;
+      font-size: 16px;
+    }
+
+    </style>
+  </head>
+  <body>
+    <script>
+    function scrollToPixel(pixelY) {
+      window.scrollTo({
+        top: pixelY,    
+        left: 0,            
+        behavior: 'smooth'  
+      });
+    }
+    </script>
+
+
+    <div class="topbar">
+       <button onclick="scrollToPixel(0)">Introduction</button>
+       <button onclick="scrollToPixel(860)">Interactive</button>
+    </div>
+
+    <p>OptimAI presents</p>
+    <h1 style="font-size: 40px; margin-top: 0px;">Commercialising Modern LEO Plans Using AI Models</h1>
+
+    <div class="containerleft">
+      <div>
+        <p>Low Earth Orbit (LEO) has been proven to be the most economically viable region for space commercialisation, allowing for telecommunication, Earth observation and in flight manufacturing. AI simulation tools such as those powered by reinforcement learning (RL) allow for more coherent launch dynamics to predict flight paths and reduce testing costs. Despite RL advancements, its application in simulating orbital vehicles commercially remain largely non-existent. The RL model used for the simulation aims to model the flight dynamics of the Falcon 9 rocket to support more efficient mission planning and design.</p>
+      </div>
+      <div>
+        <img src="{{ url_for('static', filename='ref1.png') }}" alt="reference image 1: velocity (m/s) over time of falcon 9">
+	<p style="font-size: 17px; text-align: center; margin-top: 10px; font-style: italic; color: #555;">A graph generated using matplotlib.pyplot using SpaceX-licensed Github data to show the velocity of a Falcon 9 rocket over 565 seconds. This demonstrates the data that our RL model is trained upon to give a high degree of accuracy.</p>
+      </div>
+    </div>
+
+    <h1><br><br>Interactive simulator</h1>
+    <form action="/" method="post">
+        <label for="input_value">Enter a payload mass in kilograms:</label>
+        <input type="text" name="input_value" id="input_value">
+        <button type="submit">Run simulation</button>
+    </form>
+
+    {% if message %}
+    <h2>Result:</h2>
+    <pre>{{ message }}</pre>
+    {% endif %}
+
+    <h2>Simulation</h2>
+    <p="font-size: 14px;">Entering an unrealistic value may increase the degree of error.<br>(a simulation on average takes approx. 3 minutes to complete)</p>
+    <div id="gif-container">not loaded yet!</div>
+
+    <script>
+        const gifUrl = "/static/accel.gif"; // path to your GIF
+        const container = document.getElementById("gif-container");
+
+        function checkGif() {
+            const img = new Image();
+            img.src = gifUrl + "?t=" + new Date().getTime(); // prevent caching
+            img.onload = () => container.innerHTML = `<img src="${gifUrl}" alt="GIF" style="max-width:80%;">`;
+            img.onerror = () => setTimeout(checkGif, 1000); // try again in 1s
+        }
+
+        checkGif(); // start checking
+    </script>
+
+  </body>
+</html>
