@@ -1,5 +1,5 @@
 # NASA-Space-Apps-Commercialising-LEO-by-OptimAI
->>>>Overview
+### Overview
 
 This project simulates an AI-optimized launch vehicle based on Falcon 9 telemetry data.
 The AI rocket is designed to be:
@@ -10,7 +10,7 @@ Reaches a 600 km orbit in 95% of the time compared to Falcon 9.
 
 The dataset AI_model_rocket_with_more_intervals.csv contains simulated telemetry for 578 seconds of flight with ~30 columns of flight parameters, derived and estimated from Falcon 9 data.
 
->>>>Files
+### Files
 
 Telemetry_data_falcon_9.csv
 Real Falcon 9 telemetry reference dataset.
@@ -28,7 +28,7 @@ Columns in AI_model_rocket_fledged.csv
 
 Some of the key columns include:
 
->>>>Core Telemetry
+### Core Telemetry
 
 time — mission elapsed time (s)
 
@@ -42,7 +42,7 @@ downrange_distance — horizontal distance traveled (m)
 
 angle — flight path angle (deg)
 
->>>>Propulsion
+### Propulsion
 
 thrust — thrust output (N)
 
@@ -52,7 +52,7 @@ mass_flow_rate — rate of propellant consumption (kg/s)
 
 propellant_est, mass_flow_rate_est — adjusted values (AI rocket, 4.5% more efficient)
 
->>>>Flight Environment
+### Flight Environment
 
 rho_est — estimated atmospheric density (kg/m³)
 
@@ -60,7 +60,7 @@ q / dynamic_pressure_est — dynamic pressure (Pa)
 
 mach_est — Mach number
 
->>>>Energy & Orbit
+### Energy & Orbit
 
 kinetic_energy_est — kinetic energy (J)
 
@@ -70,7 +70,7 @@ delta_v, cum_delta_v — incremental and cumulative Δv (m/s)
 
 apoapsis_est, periapsis_est — estimated orbital elements (km, rough)
 
->>>>Assumptions
+### Assumptions
 
 Units: Treated as SI (m, s, N, kg), though original Falcon telemetry may differ.
 
