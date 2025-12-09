@@ -792,20 +792,6 @@ class FixedRocketEnvironment(gym.Env):
         # Add pitch tracking
         self.pitch_angle = 0.0  # radians, 0 = vertical, pi/2 = horizontal
 
-        # Enhanced observation space with pitch
-        self.observation_space = spaces.Box(
-            low=np.array([0, -1000, 0, -1000, -1, -np.pi / 2], dtype=np.float32),  # added pitch
-            high=np.array([1000e3, 10000, 10000, 1, 1, np.pi / 2], dtype=np.float32),
-            dtype=np.float32
-        )
-
-        # Action space: [throttle, gimbal_angle] - now 2D for vertical and horizontal control
-        self.action_space = spaces.Box(
-            low=np.array([0.0, -0.3], dtype=np.float32),  # throttle, gimbal angle (radians)
-            high=np.array([1.0, 0.3], dtype=np.float32),
-            dtype=np.float32
-        )
-
         # Stage management
         self.first_stage_active = True
         self.second_stage_active = False
@@ -818,13 +804,6 @@ class FixedRocketEnvironment(gym.Env):
                                    self.rocket_params['second_stage_dry_mass'] +
                                    self.rocket_params['second_stage_fuel'])
 
-        # Enhanced observation space with horizontal components
-        self.observation_space = spaces.Box(
-            low=np.array([0, -1000, 0, -1000, -1], dtype=np.float32),  # alt, vel_v, vel_h, mass_ratio, stage
-            high=np.array([1000e3, 10000, 10000, 1, 1], dtype=np.float32),
-            dtype=np.float32
-        )
-
         # Action space: [throttle, gimbal_angle] - MUST BE 2D
         self.action_space = spaces.Box(
             low=np.array([0.0, -0.3], dtype=np.float32),  # throttle, gimbal angle
@@ -832,7 +811,7 @@ class FixedRocketEnvironment(gym.Env):
             dtype=np.float32
         )
 
-        # Enhanced observation space with 7 dimensions
+        # Enhanced observation space with 7 dimensions (alt, v_v, v_h, mass_ratio, stage, pitch, weight)
         self.observation_space = spaces.Box(
             low=np.array([0, -1000, 0, -1000, -1, -np.pi / 2, 0], dtype=np.float32),  # 7 dims
             high=np.array([1000e3, 10000, 10000, 1, 1, np.pi / 2, 1], dtype=np.float32),
@@ -1190,13 +1169,13 @@ class FixedRocketEnvironment(gym.Env):
 
         # Heavy penalty for crashing
         if self.altitude <= 0 and self.velocity_vertical < -1.0:
-            return -100, True
+            return -500, True
 
         # Base survival reward (smaller to prioritize velocity)
         reward += 0.001
 
         # ALTITUDE REWARDS (reduce these to prioritize horizontal velocity)
-        altitude_reward = (self.altitude / self.target_altitude) * 5  # Reduced from 20
+        altitude_reward = (self.altitude / self.target_altitude) * 2  # Reduced from 5
         reward += altitude_reward
 
         # HORIZONTAL VELOCITY REWARDS (greatly increased)
@@ -1204,7 +1183,7 @@ class FixedRocketEnvironment(gym.Env):
 
         # HORIZONTAL VELOCITY REWARDS (only reward positive horizontal velocity)
         if self.velocity_horizontal > 0:
-            horizontal_velocity_bonus = (self.velocity_horizontal / self.min_horizontal_velocity) * 100
+            horizontal_velocity_bonus = (self.velocity_horizontal / self.min_horizontal_velocity) * 150  # Increased from 100
             reward += horizontal_velocity_bonus
 
             # Extra bonus for good horizontal velocity
@@ -1252,7 +1231,16 @@ class FixedRocketEnvironment(gym.Env):
         # Efficiency penalty for too much vertical velocity at high altitude
         if self.altitude > 100e3 and self.velocity_vertical > 500:
             # Should be mostly horizontal by now
-            reward -= (self.velocity_vertical - 500) * 0.01
+            reward -= (self.velocity_vertical - 500) * 0.05  # Increased penalty
+
+        # Fuel efficiency bonus (small)
+        if self.first_stage_active:
+             current_fuel = self.mass - (self.rocket_params['dry_mass'] +
+                                        self.rocket_params['second_stage_dry_mass'] +
+                                        self.rocket_params['second_stage_fuel'])
+             max_fuel = self.rocket_params['fuel_mass']
+             if max_fuel > 0:
+                 reward += (current_fuel / max_fuel) * 0.1
 
         # Bonus for efficient pitch management
         second_stage_weight = self.calculate_second_stage_weight_component()
@@ -1418,14 +1406,18 @@ class SimplePPOAgent:
         self.state_dim = state_dim
         self.action_dim = action_dim
 
+        # Device selection
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"✅ Using device: {self.device}")
+
         # Use better networks if specified
         if use_better_networks:
-            self.actor = BetterActorNetwork(state_dim, action_dim)
-            self.critic = BetterCriticNetwork(state_dim)
+            self.actor = BetterActorNetwork(state_dim, action_dim).to(self.device)
+            self.critic = BetterCriticNetwork(state_dim).to(self.device)
             print("✅ Using BetterActorNetwork and BetterCriticNetwork")
         else:
-            self.actor = SimpleActorNetwork(state_dim, action_dim)
-            self.critic = SimpleCriticNetwork(state_dim)
+            self.actor = SimpleActorNetwork(state_dim, action_dim).to(self.device)
+            self.critic = SimpleCriticNetwork(state_dim).to(self.device)
             print("✅ Using SimpleActorNetwork and SimpleCriticNetwork")
 
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr, weight_decay=1e-5)
@@ -1457,7 +1449,7 @@ class SimplePPOAgent:
             if not isinstance(state, np.ndarray):
                 state = np.array(state, dtype=np.float32)
 
-            state_tensor = torch.FloatTensor(state).unsqueeze(0)
+            state_tensor = torch.FloatTensor(state).to(self.device).unsqueeze(0)
 
             with torch.no_grad():
                 mean, log_std = self.actor(state_tensor)
@@ -1481,10 +1473,10 @@ class SimplePPOAgent:
                 normal = Normal(mean, std)
                 action = torch.tanh(normal.sample())
 
-            action = action.squeeze(0).numpy().astype(np.float32)
+            action = action.squeeze(0).cpu().numpy().astype(np.float32)
 
             # Calculate log probability
-            state_tensor = torch.FloatTensor(state).unsqueeze(0)
+            state_tensor = torch.FloatTensor(state).to(self.device).unsqueeze(0)
             mean, log_std = self.actor(state_tensor)
             std = log_std.exp()
             normal = Normal(mean, std)
@@ -1520,25 +1512,26 @@ class SimplePPOAgent:
             return
 
         try:
-            # Convert to tensors
-            states = torch.FloatTensor(np.array(self.states))
-            actions = torch.FloatTensor(np.array(self.actions))
-            old_log_probs = torch.FloatTensor(np.array(self.log_probs))
-            rewards = torch.FloatTensor(np.array(self.rewards))
-            next_states = torch.FloatTensor(np.array(self.next_states))
-            dones = torch.FloatTensor(np.array(self.dones))
+            # Convert to tensors and move to device
+            states = torch.FloatTensor(np.array(self.states)).to(self.device)
+            actions = torch.FloatTensor(np.array(self.actions)).to(self.device)
+            old_log_probs = torch.FloatTensor(np.array(self.log_probs)).to(self.device)
+            rewards = torch.FloatTensor(np.array(self.rewards)).to(self.device)
+            next_states = torch.FloatTensor(np.array(self.next_states)).to(self.device)
+            dones = torch.FloatTensor(np.array(self.dones)).to(self.device)
 
             # Compute values
             with torch.no_grad():
                 values = self.critic(states).squeeze()
                 next_values = self.critic(next_states).squeeze()
 
-            # IMPROVED: More robust GAE advantage calculation
-            advantages = []
-            returns = []
-            gae = 0
+            # Optimized GAE calculation
+            advantages = torch.zeros_like(rewards).to(self.device)
+            last_gae_lam = 0
 
-            # Calculate advantages in reverse
+            # Using vector operations where possible or efficient iteration
+            # We still iterate because GAE is recursive, but we use tensor operations inside
+            # Note: We iterate backwards
             for t in reversed(range(len(rewards))):
                 if t == len(rewards) - 1:
                     next_non_terminal = 1.0 - dones[t]
@@ -1548,12 +1541,10 @@ class SimplePPOAgent:
                     next_value = values[t + 1]
 
                 delta = rewards[t] + self.gamma * next_value * next_non_terminal - values[t]
-                gae = delta + self.gamma * self.gae_lambda * next_non_terminal * gae
-                advantages.insert(0, gae)
-                returns.insert(0, gae + values[t])
+                last_gae_lam = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae_lam
+                advantages[t] = last_gae_lam
 
-            advantages = torch.FloatTensor(advantages)
-            returns = torch.FloatTensor(returns)
+            returns = advantages + values
 
             # Normalize advantages - CRITICAL FOR STABILITY
             if len(advantages) > 1:
@@ -1857,7 +1848,7 @@ class OrbitalRocketTrainer:
 
         times = [s['time'] for s in self.env.trajectory]
         altitudes = [s['altitude'] for s in self.env.trajectory]
-        velocities = [s['velocity'] for s in self.env.trajectory]
+        velocities = [s['velocity_total'] for s in self.env.trajectory]
         masses = [s['mass'] for s in self.env.trajectory]
 
         plt.figure(figsize=(15, 5))
@@ -1926,7 +1917,7 @@ class FixedRocketTrainer:
 
             # Record progress
             max_alt = max([s['altitude'] for s in self.env.trajectory]) if self.env.trajectory else 0
-            max_vel = max([s['velocity'] for s in self.env.trajectory]) if self.env.trajectory else 0
+            max_vel = max([s['velocity_total'] for s in self.env.trajectory]) if self.env.trajectory else 0
 
             self.episode_rewards.append(episode_reward)
             self.max_altitudes.append(max_alt)
@@ -1968,7 +1959,7 @@ class FixedRocketTrainer:
 
         times = [s['time'] for s in self.env.trajectory]
         altitudes = [s['altitude'] for s in self.env.trajectory]
-        velocities = [s['velocity'] for s in self.env.trajectory]
+        velocities = [s['velocity_total'] for s in self.env.trajectory]
         masses = [s['mass'] for s in self.env.trajectory]
 
         plt.figure(figsize=(15, 5))
