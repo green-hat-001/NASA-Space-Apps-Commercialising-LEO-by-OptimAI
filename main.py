@@ -792,20 +792,6 @@ class FixedRocketEnvironment(gym.Env):
         # Add pitch tracking
         self.pitch_angle = 0.0  # radians, 0 = vertical, pi/2 = horizontal
 
-        # Enhanced observation space with pitch
-        self.observation_space = spaces.Box(
-            low=np.array([0, -1000, 0, -1000, -1, -np.pi / 2], dtype=np.float32),  # added pitch
-            high=np.array([1000e3, 10000, 10000, 1, 1, np.pi / 2], dtype=np.float32),
-            dtype=np.float32
-        )
-
-        # Action space: [throttle, gimbal_angle] - now 2D for vertical and horizontal control
-        self.action_space = spaces.Box(
-            low=np.array([0.0, -0.3], dtype=np.float32),  # throttle, gimbal angle (radians)
-            high=np.array([1.0, 0.3], dtype=np.float32),
-            dtype=np.float32
-        )
-
         # Stage management
         self.first_stage_active = True
         self.second_stage_active = False
@@ -818,13 +804,6 @@ class FixedRocketEnvironment(gym.Env):
                                    self.rocket_params['second_stage_dry_mass'] +
                                    self.rocket_params['second_stage_fuel'])
 
-        # Enhanced observation space with horizontal components
-        self.observation_space = spaces.Box(
-            low=np.array([0, -1000, 0, -1000, -1], dtype=np.float32),  # alt, vel_v, vel_h, mass_ratio, stage
-            high=np.array([1000e3, 10000, 10000, 1, 1], dtype=np.float32),
-            dtype=np.float32
-        )
-
         # Action space: [throttle, gimbal_angle] - MUST BE 2D
         self.action_space = spaces.Box(
             low=np.array([0.0, -0.3], dtype=np.float32),  # throttle, gimbal angle
@@ -832,7 +811,7 @@ class FixedRocketEnvironment(gym.Env):
             dtype=np.float32
         )
 
-        # Enhanced observation space with 7 dimensions
+        # Enhanced observation space with 7 dimensions (alt, v_v, v_h, mass_ratio, stage, pitch, weight)
         self.observation_space = spaces.Box(
             low=np.array([0, -1000, 0, -1000, -1, -np.pi / 2, 0], dtype=np.float32),  # 7 dims
             high=np.array([1000e3, 10000, 10000, 1, 1, np.pi / 2, 1], dtype=np.float32),
@@ -1857,7 +1836,7 @@ class OrbitalRocketTrainer:
 
         times = [s['time'] for s in self.env.trajectory]
         altitudes = [s['altitude'] for s in self.env.trajectory]
-        velocities = [s['velocity'] for s in self.env.trajectory]
+        velocities = [s['velocity_total'] for s in self.env.trajectory]
         masses = [s['mass'] for s in self.env.trajectory]
 
         plt.figure(figsize=(15, 5))
@@ -1926,7 +1905,7 @@ class FixedRocketTrainer:
 
             # Record progress
             max_alt = max([s['altitude'] for s in self.env.trajectory]) if self.env.trajectory else 0
-            max_vel = max([s['velocity'] for s in self.env.trajectory]) if self.env.trajectory else 0
+            max_vel = max([s['velocity_total'] for s in self.env.trajectory]) if self.env.trajectory else 0
 
             self.episode_rewards.append(episode_reward)
             self.max_altitudes.append(max_alt)
@@ -1968,7 +1947,7 @@ class FixedRocketTrainer:
 
         times = [s['time'] for s in self.env.trajectory]
         altitudes = [s['altitude'] for s in self.env.trajectory]
-        velocities = [s['velocity'] for s in self.env.trajectory]
+        velocities = [s['velocity_total'] for s in self.env.trajectory]
         masses = [s['mass'] for s in self.env.trajectory]
 
         plt.figure(figsize=(15, 5))
