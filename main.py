@@ -1406,14 +1406,18 @@ class SimplePPOAgent:
         self.state_dim = state_dim
         self.action_dim = action_dim
 
+        # Device selection
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"✅ Using device: {self.device}")
+
         # Use better networks if specified
         if use_better_networks:
-            self.actor = BetterActorNetwork(state_dim, action_dim)
-            self.critic = BetterCriticNetwork(state_dim)
+            self.actor = BetterActorNetwork(state_dim, action_dim).to(self.device)
+            self.critic = BetterCriticNetwork(state_dim).to(self.device)
             print("✅ Using BetterActorNetwork and BetterCriticNetwork")
         else:
-            self.actor = SimpleActorNetwork(state_dim, action_dim)
-            self.critic = SimpleCriticNetwork(state_dim)
+            self.actor = SimpleActorNetwork(state_dim, action_dim).to(self.device)
+            self.critic = SimpleCriticNetwork(state_dim).to(self.device)
             print("✅ Using SimpleActorNetwork and SimpleCriticNetwork")
 
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr, weight_decay=1e-5)
@@ -1445,7 +1449,7 @@ class SimplePPOAgent:
             if not isinstance(state, np.ndarray):
                 state = np.array(state, dtype=np.float32)
 
-            state_tensor = torch.FloatTensor(state).unsqueeze(0)
+            state_tensor = torch.FloatTensor(state).to(self.device).unsqueeze(0)
 
             with torch.no_grad():
                 mean, log_std = self.actor(state_tensor)
@@ -1469,10 +1473,10 @@ class SimplePPOAgent:
                 normal = Normal(mean, std)
                 action = torch.tanh(normal.sample())
 
-            action = action.squeeze(0).numpy().astype(np.float32)
+            action = action.squeeze(0).cpu().numpy().astype(np.float32)
 
             # Calculate log probability
-            state_tensor = torch.FloatTensor(state).unsqueeze(0)
+            state_tensor = torch.FloatTensor(state).to(self.device).unsqueeze(0)
             mean, log_std = self.actor(state_tensor)
             std = log_std.exp()
             normal = Normal(mean, std)
@@ -1508,25 +1512,26 @@ class SimplePPOAgent:
             return
 
         try:
-            # Convert to tensors
-            states = torch.FloatTensor(np.array(self.states))
-            actions = torch.FloatTensor(np.array(self.actions))
-            old_log_probs = torch.FloatTensor(np.array(self.log_probs))
-            rewards = torch.FloatTensor(np.array(self.rewards))
-            next_states = torch.FloatTensor(np.array(self.next_states))
-            dones = torch.FloatTensor(np.array(self.dones))
+            # Convert to tensors and move to device
+            states = torch.FloatTensor(np.array(self.states)).to(self.device)
+            actions = torch.FloatTensor(np.array(self.actions)).to(self.device)
+            old_log_probs = torch.FloatTensor(np.array(self.log_probs)).to(self.device)
+            rewards = torch.FloatTensor(np.array(self.rewards)).to(self.device)
+            next_states = torch.FloatTensor(np.array(self.next_states)).to(self.device)
+            dones = torch.FloatTensor(np.array(self.dones)).to(self.device)
 
             # Compute values
             with torch.no_grad():
                 values = self.critic(states).squeeze()
                 next_values = self.critic(next_states).squeeze()
 
-            # IMPROVED: More robust GAE advantage calculation
-            advantages = []
-            returns = []
-            gae = 0
+            # Optimized GAE calculation
+            advantages = torch.zeros_like(rewards).to(self.device)
+            last_gae_lam = 0
 
-            # Calculate advantages in reverse
+            # Using vector operations where possible or efficient iteration
+            # We still iterate because GAE is recursive, but we use tensor operations inside
+            # Note: We iterate backwards
             for t in reversed(range(len(rewards))):
                 if t == len(rewards) - 1:
                     next_non_terminal = 1.0 - dones[t]
@@ -1536,12 +1541,10 @@ class SimplePPOAgent:
                     next_value = values[t + 1]
 
                 delta = rewards[t] + self.gamma * next_value * next_non_terminal - values[t]
-                gae = delta + self.gamma * self.gae_lambda * next_non_terminal * gae
-                advantages.insert(0, gae)
-                returns.insert(0, gae + values[t])
+                last_gae_lam = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae_lam
+                advantages[t] = last_gae_lam
 
-            advantages = torch.FloatTensor(advantages)
-            returns = torch.FloatTensor(returns)
+            returns = advantages + values
 
             # Normalize advantages - CRITICAL FOR STABILITY
             if len(advantages) > 1:
