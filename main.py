@@ -1169,13 +1169,13 @@ class FixedRocketEnvironment(gym.Env):
 
         # Heavy penalty for crashing
         if self.altitude <= 0 and self.velocity_vertical < -1.0:
-            return -100, True
+            return -500, True
 
         # Base survival reward (smaller to prioritize velocity)
         reward += 0.001
 
         # ALTITUDE REWARDS (reduce these to prioritize horizontal velocity)
-        altitude_reward = (self.altitude / self.target_altitude) * 5  # Reduced from 20
+        altitude_reward = (self.altitude / self.target_altitude) * 2  # Reduced from 5
         reward += altitude_reward
 
         # HORIZONTAL VELOCITY REWARDS (greatly increased)
@@ -1183,7 +1183,7 @@ class FixedRocketEnvironment(gym.Env):
 
         # HORIZONTAL VELOCITY REWARDS (only reward positive horizontal velocity)
         if self.velocity_horizontal > 0:
-            horizontal_velocity_bonus = (self.velocity_horizontal / self.min_horizontal_velocity) * 100
+            horizontal_velocity_bonus = (self.velocity_horizontal / self.min_horizontal_velocity) * 150  # Increased from 100
             reward += horizontal_velocity_bonus
 
             # Extra bonus for good horizontal velocity
@@ -1231,7 +1231,16 @@ class FixedRocketEnvironment(gym.Env):
         # Efficiency penalty for too much vertical velocity at high altitude
         if self.altitude > 100e3 and self.velocity_vertical > 500:
             # Should be mostly horizontal by now
-            reward -= (self.velocity_vertical - 500) * 0.01
+            reward -= (self.velocity_vertical - 500) * 0.05  # Increased penalty
+
+        # Fuel efficiency bonus (small)
+        if self.first_stage_active:
+             current_fuel = self.mass - (self.rocket_params['dry_mass'] +
+                                        self.rocket_params['second_stage_dry_mass'] +
+                                        self.rocket_params['second_stage_fuel'])
+             max_fuel = self.rocket_params['fuel_mass']
+             if max_fuel > 0:
+                 reward += (current_fuel / max_fuel) * 0.1
 
         # Bonus for efficient pitch management
         second_stage_weight = self.calculate_second_stage_weight_component()
