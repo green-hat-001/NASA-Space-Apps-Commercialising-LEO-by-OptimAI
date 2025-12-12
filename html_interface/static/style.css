@@ -1,0 +1,9 @@
+/* Dark mode default styles for inputs/buttons reused across pages */
+body {
+    -webkit-font-smoothing: antialiased;
+}
+
+input:focus, button:focus {
+    outline: 2px solid #007bff;
+    outline-offset: 2px;
+}
