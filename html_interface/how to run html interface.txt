@@ -1,2 +1,37 @@
-Run through terminal or command prompt. Run the file trigger.py and then enter this URL into your browser: http://127.0.0.1:5000
+How to Run the Covert Chat Application
 
+1. Prerequisites
+   You need Python installed.
+   Install the required libraries:
+   pip install flask flask-socketio eventlet
+
+2. Running the Application
+   Navigate to the repository root.
+   Run the server:
+   python html_interface/trigger.py
+
+   The server will start at http://127.0.0.1:5000 (or http://0.0.0.0:5000).
+
+3. Usage Guide
+
+   A. First Time Setup
+      - When you open the app for the very first time, you will see a green "First Time Setup" button on the login screen.
+      - Click it to set your Admin Email and your "Secret Key" (this acts as the global password for the chat).
+      - Once set, the Setup button will disappear forever.
+
+   B. Accessing the Chat
+      - On the Login screen:
+        - Email: Enter your email (this will be your display name).
+        - Name: Enter the "Secret Key" you configured in step A.
+      - If the Name matches the Secret Key, you are logged in to the Secure Channel.
+
+   C. The Decoy
+      - If you enter any Name other than the Secret Key, the app behaves as a decoy.
+      - You will be redirected to a benign "Hello" screen with a waving hand animation.
+      - No error message is shown, making it look like a generic landing page.
+
+   D. Chat Features
+      - Real-time messaging.
+      - Dark mode interface.
+      - Persistent history (messages are saved to chat.db).
+      - Emoji autocomplete: Type ":" followed by a word (e.g., ":fire", ":smile") to see suggestions.
