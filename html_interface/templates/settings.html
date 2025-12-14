@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .settings-container {
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            color: var(--text-primary);
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        input[type="text"], input[type="password"] {
+            width: 100%;
+            padding: 10px;
+            border-radius: 4px;
+            border: 1px solid var(--border-color);
+            background: var(--input-bg);
+            color: var(--text-primary);
+        }
+        .btn-primary {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .btn-secondary {
+            background-color: #6c757d;
+            color: white;
+            padding: 10px 20px;
+            text-decoration: none;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        .recorder-box {
+            padding: 10px;
+            border: 1px dashed var(--border-color);
+            background: var(--input-bg);
+            text-align: center;
+            cursor: pointer;
+            margin-top: 5px;
+        }
+        .flash {
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+        .flash.success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+    </style>
+</head>
+<body>
+    <div class="settings-container">
+        <h1>Settings</h1>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="flash {{ category }}">{{ message }}</div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+
+        <form action="{{ url_for('settings') }}" method="POST">
+            <div class="form-group">
+                <label>Change Secret Key (Password)</label>
+                <input type="text" name="secret_key" placeholder="Leave empty to keep current">
+            </div>
+
+            <div class="form-group">
+                <label>Decoy Redirect URL</label>
+                <input type="text" name="decoy_url" value="{{ decoy_url }}" placeholder="e.g. /decoy or https://google.com">
+                <small>Where to go if authentication fails or panic button is pressed.</small>
+            </div>
+
+            <div class="form-group">
+                <label>Panic Key Combination</label>
+                <input type="hidden" name="panic_key" id="panic_key_input" value="{{ panic_key }}">
+                <div id="recorder" class="recorder-box">
+                    {% if panic_key %}
+                        Current: {{ panic_key }} (Click to record new)
+                    {% else %}
+                        Click here and press keys to record
+                    {% endif %}
+                </div>
+                <button type="button" onclick="clearPanic()" style="margin-top:5px; font-size:0.8rem;">Clear</button>
+            </div>
+
+            <button type="submit" class="btn-primary">Save Changes</button>
+            <a href="{{ url_for('chat') }}" class="btn-secondary">Back to Chat</a>
+        </form>
+    </div>
+
+    <script src="{{ url_for('static', filename='theme.js') }}"></script>
+    <script>
+        const recorder = document.getElementById('recorder');
+        const input = document.getElementById('panic_key_input');
+        let recording = false;
+
+        recorder.addEventListener('click', () => {
+            recording = true;
+            recorder.innerText = "Press keys now...";
+            recorder.style.borderColor = "#007bff";
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (!recording) return;
+            e.preventDefault();
+            e.stopPropagation(); // Stop event from bubbling
+
+            let keys = [];
+            if (e.ctrlKey) keys.push('Ctrl');
+            if (e.altKey) keys.push('Alt');
+            if (e.shiftKey) keys.push('Shift');
+            if (e.metaKey) keys.push('Meta');
+
+            const isModifier = ['Control', 'Alt', 'Shift', 'Meta'].includes(e.key);
+
+            if (!isModifier) {
+                keys.push(e.key.toUpperCase());
+            }
+
+            const combo = keys.join('+');
+
+            // Only update UI while recording (live preview)
+            recorder.innerText = `Recording: ${combo}`;
+
+            // If a non-modifier key is pressed, or if we have at least one key and it's not JUST a modifier press
+            // Actually, we want to finalize when a non-modifier is pressed OR the user stops pressing keys?
+            // "Win+3" -> Win (down), 3 (down).
+            // When '3' is pressed, we have the full combo.
+
+            if (!isModifier && keys.length > 0) {
+                 input.value = combo;
+                 recorder.innerText = `Recorded: ${combo}`;
+                 recorder.style.borderColor = "#28a745";
+                 recording = false;
+            }
+        });
+
+        function clearPanic() {
+            input.value = '';
+            recorder.innerText = "Click here and press keys to record";
+            recording = false;
+        }
+    </script>
+</body>
+</html>

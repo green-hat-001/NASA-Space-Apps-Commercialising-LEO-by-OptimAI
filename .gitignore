@@ -1,0 +1,6 @@
+chat.db
+*.log
+__pycache__/
+*.pyc
+html_interface/static/uploads/*
+!html_interface/static/uploads/.gitkeep

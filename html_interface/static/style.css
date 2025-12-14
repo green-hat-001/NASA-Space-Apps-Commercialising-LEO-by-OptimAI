@@ -1,0 +1,75 @@
+:root {
+    /* Dark Theme (Default) */
+    --bg-primary: #121212;
+    --bg-secondary: #1f1f1f;
+    --text-primary: #e0e0e0;
+    --text-secondary: rgba(255,255,255,0.6);
+    --msg-mine: #005c4b;
+    --msg-theirs: #333;
+    --input-bg: #2a2a2a;
+    --input-focus: #333;
+    --border-color: #333;
+    --bg-hover: #333;
+}
+
+body.light-mode {
+    /* Light Theme */
+    --bg-primary: #f0f2f5;
+    --bg-secondary: #ffffff;
+    --text-primary: #1a1a1a;
+    --text-secondary: rgba(0,0,0,0.6);
+    --msg-mine: #008f6f;
+    --msg-theirs: #ffffff;
+    --input-bg: #f0f2f5;
+    --input-focus: #e4e6eb;
+    --border-color: #ddd;
+    --bg-hover: #f0f2f5;
+}
+
+/* Common resets */
+body {
+    -webkit-font-smoothing: antialiased;
+}
+
+input:focus, button:focus {
+    outline: 2px solid #007bff;
+    outline-offset: 2px;
+}
+
+/* Lightbox Styles */
+.lightbox {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.9);
+    justify-content: center;
+    align-items: center;
+    z-index: 2000;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+.lightbox.active {
+    display: flex;
+    opacity: 1;
+}
+.lightbox img {
+    max-width: 90%;
+    max-height: 90%;
+    border-radius: 4px;
+    box-shadow: 0 0 20px rgba(0,0,0,0.5);
+    transform: scale(0.9);
+    transition: transform 0.2s ease;
+}
+.lightbox.active img {
+    transform: scale(1);
+}
+.lightbox-close {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    color: white;
+    font-size: 2rem;
+    cursor: pointer;
+    background: none;
+    border: none;
+}
