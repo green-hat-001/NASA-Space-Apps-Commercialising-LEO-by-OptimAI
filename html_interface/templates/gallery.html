@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gallery</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .gallery-container {
+            max-width: 1000px;
+            margin: 20px auto;
+            padding: 20px;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        .grid-item {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            position: relative;
+        }
+        .grid-item img {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+            display: block;
+            cursor: pointer;
+        }
+        .info {
+            padding: 8px;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+        .sender {
+            font-weight: bold;
+            color: var(--text-primary);
+        }
+        /* Lightbox (simple) */
+        .lightbox {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.9);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .lightbox img {
+            max-width: 90%;
+            max-height: 90%;
+            border-radius: 4px;
+        }
+        .lightbox.active {
+            display: flex;
+        }
+    </style>
+</head>
+<body>
+    <div class="gallery-container">
+        <div class="header">
+            <h1>Shared Images</h1>
+            <a href="{{ url_for('chat') }}" class="btn-secondary" style="padding: 8px 16px; background: var(--bg-secondary); text-decoration:none; color: var(--text-primary); border-radius: 4px;">Back to Chat</a>
+        </div>
+
+        <div class="grid">
+            {% for img in images %}
+            <div class="grid-item">
+                <img src="{{ img.url }}" onclick="openLightbox('{{ img.url }}')">
+                <div class="info">
+                    <div class="sender">{{ img.sender.split('@')[0] }}</div>
+                    <div>{{ img.timestamp }}</div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="lightbox" id="lightbox" onclick="this.classList.remove('active')">
+        <img id="lightbox-img" src="">
+    </div>
+
+    <script src="{{ url_for('static', filename='theme.js') }}"></script>
+    <script>
+        function openLightbox(url) {
+            document.getElementById('lightbox-img').src = url;
+            document.getElementById('lightbox').classList.add('active');
+        }
+    </script>
+</body>
+</html>

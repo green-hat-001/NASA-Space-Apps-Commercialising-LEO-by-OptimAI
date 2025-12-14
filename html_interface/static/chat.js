@@ -1,6 +1,7 @@
 const socket = io();
 const chatContainer = document.getElementById('chat-container');
 const messageInput = document.getElementById('message-input');
+const fileInput = document.getElementById('file-input');
 const suggestionsBox = document.getElementById('emoji-suggestions');
 
 // Auto-scroll logic
@@ -22,7 +23,6 @@ socket.on('message', function(data) {
 
     msgDiv.className = `message ${isMine ? 'mine' : 'theirs'}`;
 
-    // Create elements individually to prevent XSS
     if (!isMine) {
         const senderDiv = document.createElement('div');
         senderDiv.className = 'sender-name';
@@ -30,12 +30,20 @@ socket.on('message', function(data) {
         msgDiv.appendChild(senderDiv);
     }
 
-    // Add text content safely
-    // Note: We are appending a text node directly to the msgDiv (or checking for mixed content)
-    // The previous implementation used innerHTML with ${data.content}.
-    // Here we want the text to appear after the sender name (if present).
-    const textNode = document.createTextNode(data.content);
-    msgDiv.appendChild(textNode);
+    // Handle Content (Text or Image)
+    if (data.type === 'image') {
+        if (data.content) {
+            const textDiv = document.createElement('div');
+            textDiv.textContent = data.content;
+            msgDiv.appendChild(textDiv);
+        }
+        const img = document.createElement('img');
+        img.src = data.media_path;
+        msgDiv.appendChild(img);
+    } else {
+        const textNode = document.createTextNode(data.content);
+        msgDiv.appendChild(textNode);
+    }
 
     // Meta (timestamp)
     const metaDiv = document.createElement('div');
@@ -52,13 +60,64 @@ socket.on('message', function(data) {
 function sendMessage() {
     const content = messageInput.value.trim();
     if (content) {
-        socket.emit('message', { msg: content });
+        socket.emit('message', { msg: content, type: 'text' });
         messageInput.value = '';
     }
     suggestionsBox.style.display = 'none';
 }
 
+function uploadFile(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    fetch('/upload', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.url) {
+            // Send message with image URL
+            socket.emit('message', {
+                msg: messageInput.value.trim(), // Optional caption
+                type: 'image',
+                media_path: data.url
+            });
+            messageInput.value = ''; // Clear caption if sent
+        } else {
+            alert('Upload failed');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Upload failed');
+    });
+}
+
+// File Input Change
+if (fileInput) {
+    fileInput.addEventListener('change', function() {
+        if (this.files && this.files[0]) {
+            uploadFile(this.files[0]);
+            this.value = ''; // Reset
+        }
+    });
+}
+
+// Paste Handler
 if (messageInput) {
+    messageInput.addEventListener('paste', function(e) {
+        const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+        for (let index in items) {
+            const item = items[index];
+            if (item.kind === 'file' && item.type.startsWith('image/')) {
+                const blob = item.getAsFile();
+                uploadFile(blob);
+                e.preventDefault(); // Prevent pasting filename text
+            }
+        }
+    });
+
     messageInput.addEventListener('keypress', function(e) {
         if (e.key === 'Enter') {
             sendMessage();

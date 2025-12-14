@@ -67,6 +67,12 @@
             color: var(--text-primary);
             border-bottom-left-radius: 2px;
         }
+        .message img {
+            max-width: 100%;
+            border-radius: 8px;
+            margin-top: 5px;
+            cursor: pointer;
+        }
         .meta {
             font-size: 0.75rem;
             color: rgba(255,255,255,0.6);
@@ -91,6 +97,7 @@
             border-top: 1px solid var(--border-color);
             flex-shrink: 0;
             position: relative;
+            align-items: center;
         }
         input[type="text"] {
             flex-grow: 1;
@@ -113,9 +120,21 @@
             border-radius: 20px;
             cursor: pointer;
             font-weight: bold;
+            height: 44px;
         }
         button.send-btn:hover {
             background-color: #008f6f;
+        }
+        .upload-btn {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 0 10px;
+        }
+        .upload-btn:hover {
+            color: var(--text-primary);
         }
 
         #emoji-suggestions {
@@ -144,7 +163,10 @@
 </head>
 <body>
     <header>
-        <button onclick="toggleTheme()" class="header-btn" title="Toggle Theme">🌓</button>
+        <div style="display:flex; gap:10px;">
+            <button onclick="toggleTheme()" class="header-btn" title="Toggle Theme">🌓</button>
+            <a href="{{ url_for('gallery') }}" class="header-btn">Gallery</a>
+        </div>
         <h2>Secure Channel</h2>
         <a href="{{ url_for('settings') }}" class="header-btn">Settings</a>
     </header>
@@ -155,7 +177,16 @@
             {% if msg.sender != user_email %}
             <div class="sender-name">{{ msg.sender.split('@')[0] }}</div>
             {% endif %}
-            {{ msg.content }}
+
+            {% if msg.type == 'image' %}
+                {% if msg.content %}
+                    <div>{{ msg.content }}</div>
+                {% endif %}
+                <img src="{{ msg.media_path }}" alt="Image">
+            {% else %}
+                {{ msg.content }}
+            {% endif %}
+
             <div class="meta">
                 <span>{{ msg.timestamp }}</span>
             </div>
@@ -165,7 +196,9 @@
 
     <div class="input-area">
         <div id="emoji-suggestions"></div>
-        <input type="text" id="message-input" placeholder="Type a message..." autocomplete="off">
+        <input type="file" id="file-input" style="display:none;" accept="image/*">
+        <button class="upload-btn" onclick="document.getElementById('file-input').click()">📎</button>
+        <input type="text" id="message-input" placeholder="Type a message or paste image..." autocomplete="off">
         <button class="send-btn" onclick="sendMessage()">Send</button>
     </div>
 
