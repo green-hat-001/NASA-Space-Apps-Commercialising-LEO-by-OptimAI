@@ -72,6 +72,10 @@
             border-radius: 8px;
             margin-top: 5px;
             cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .message img:hover {
+            opacity: 0.9;
         }
         .meta {
             font-size: 0.75rem;
@@ -89,16 +93,52 @@
             font-weight: bold;
             color: #4db6ac;
         }
-        .input-area {
+        .input-area-wrapper {
             background-color: var(--bg-secondary);
-            padding: 15px;
-            display: flex;
-            gap: 10px;
             border-top: 1px solid var(--border-color);
             flex-shrink: 0;
             position: relative;
+        }
+        .input-area {
+            padding: 15px;
+            display: flex;
+            gap: 10px;
             align-items: center;
         }
+        /* Preview Area */
+        #preview-area {
+            display: none;
+            padding: 10px 15px 0;
+            background-color: var(--bg-secondary);
+        }
+        .preview-item {
+            position: relative;
+            display: inline-block;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+        .preview-item img {
+            max-height: 100px;
+            display: block;
+        }
+        .preview-remove {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: rgba(0,0,0,0.6);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 12px;
+        }
+
         input[type="text"] {
             flex-grow: 1;
             padding: 12px;
@@ -125,6 +165,12 @@
         button.send-btn:hover {
             background-color: #008f6f;
         }
+        /* Loading Spinner for button */
+        button.send-btn.loading {
+            opacity: 0.7;
+            cursor: wait;
+        }
+
         .upload-btn {
             background: none;
             border: none;
@@ -182,7 +228,7 @@
                 {% if msg.content %}
                     <div>{{ msg.content }}</div>
                 {% endif %}
-                <img src="{{ msg.media_path }}" alt="Image">
+                <img src="{{ msg.media_path }}" alt="Image" onclick="openLightbox(this.src)">
             {% else %}
                 {{ msg.content }}
             {% endif %}
@@ -194,12 +240,21 @@
         {% endfor %}
     </div>
 
-    <div class="input-area">
-        <div id="emoji-suggestions"></div>
-        <input type="file" id="file-input" style="display:none;" accept="image/*">
-        <button class="upload-btn" onclick="document.getElementById('file-input').click()">📎</button>
-        <input type="text" id="message-input" placeholder="Type a message or paste image..." autocomplete="off">
-        <button class="send-btn" onclick="sendMessage()">Send</button>
+    <div class="input-area-wrapper">
+        <div id="preview-area"></div>
+        <div class="input-area">
+            <div id="emoji-suggestions"></div>
+            <input type="file" id="file-input" style="display:none;" accept="image/*">
+            <button class="upload-btn" onclick="document.getElementById('file-input').click()">📎</button>
+            <input type="text" id="message-input" placeholder="Type a message or paste image..." autocomplete="off">
+            <button id="send-btn" class="send-btn" onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+
+    <!-- Lightbox -->
+    <div class="lightbox" id="lightbox" onclick="closeLightbox()">
+        <button class="lightbox-close">&times;</button>
+        <img id="lightbox-img" src="">
     </div>
 
     <script>

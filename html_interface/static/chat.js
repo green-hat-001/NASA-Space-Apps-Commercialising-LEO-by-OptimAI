@@ -3,6 +3,10 @@ const chatContainer = document.getElementById('chat-container');
 const messageInput = document.getElementById('message-input');
 const fileInput = document.getElementById('file-input');
 const suggestionsBox = document.getElementById('emoji-suggestions');
+const previewArea = document.getElementById('preview-area');
+const sendBtn = document.getElementById('send-btn');
+
+let pendingFile = null;
 
 // Auto-scroll logic
 function scrollToBottom(force = false) {
@@ -39,6 +43,7 @@ socket.on('message', function(data) {
         }
         const img = document.createElement('img');
         img.src = data.media_path;
+        img.onclick = function() { openLightbox(this.src); }; // Add click handler
         msgDiv.appendChild(img);
     } else {
         const textNode = document.createTextNode(data.content);
@@ -57,49 +62,85 @@ socket.on('message', function(data) {
     scrollToBottom();
 });
 
+function handleFileSelect(file) {
+    if (!file || !file.type.startsWith('image/')) return;
+
+    pendingFile = file;
+
+    // Read and preview
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        previewArea.innerHTML = `
+            <div class="preview-item">
+                <img src="${e.target.result}">
+                <button class="preview-remove" onclick="clearPreview()">&times;</button>
+            </div>
+        `;
+        previewArea.style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+}
+
+function clearPreview() {
+    pendingFile = null;
+    previewArea.innerHTML = '';
+    previewArea.style.display = 'none';
+}
+
 function sendMessage() {
     const content = messageInput.value.trim();
-    if (content) {
+
+    if (pendingFile) {
+        // Disable button
+        sendBtn.disabled = true;
+        sendBtn.classList.add('loading');
+        sendBtn.textContent = '...';
+
+        const formData = new FormData();
+        formData.append('file', pendingFile);
+
+        fetch('/upload', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.url) {
+                socket.emit('message', {
+                    msg: content,
+                    type: 'image',
+                    media_path: data.url
+                });
+                messageInput.value = '';
+                clearPreview();
+            } else {
+                alert('Upload failed');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Upload failed');
+        })
+        .finally(() => {
+            sendBtn.disabled = false;
+            sendBtn.classList.remove('loading');
+            sendBtn.textContent = 'Send';
+        });
+
+    } else if (content) {
         socket.emit('message', { msg: content, type: 'text' });
         messageInput.value = '';
     }
+
     suggestionsBox.style.display = 'none';
-}
-
-function uploadFile(file) {
-    const formData = new FormData();
-    formData.append('file', file);
-
-    fetch('/upload', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.url) {
-            // Send message with image URL
-            socket.emit('message', {
-                msg: messageInput.value.trim(), // Optional caption
-                type: 'image',
-                media_path: data.url
-            });
-            messageInput.value = ''; // Clear caption if sent
-        } else {
-            alert('Upload failed');
-        }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        alert('Upload failed');
-    });
 }
 
 // File Input Change
 if (fileInput) {
     fileInput.addEventListener('change', function() {
         if (this.files && this.files[0]) {
-            uploadFile(this.files[0]);
-            this.value = ''; // Reset
+            handleFileSelect(this.files[0]);
+            this.value = ''; // Reset input so same file can be selected again if needed
         }
     });
 }
@@ -112,7 +153,7 @@ if (messageInput) {
             const item = items[index];
             if (item.kind === 'file' && item.type.startsWith('image/')) {
                 const blob = item.getAsFile();
-                uploadFile(blob);
+                handleFileSelect(blob);
                 e.preventDefault(); // Prevent pasting filename text
             }
         }
@@ -163,9 +204,24 @@ window.insertEmoji = function(emoji, trigger) {
     messageInput.focus();
 };
 
+// Global Lightbox Logic
+window.openLightbox = function(url) {
+    const lightbox = document.getElementById('lightbox');
+    const img = document.getElementById('lightbox-img');
+    img.src = url;
+    lightbox.classList.add('active');
+};
+
+window.closeLightbox = function() {
+    document.getElementById('lightbox').classList.remove('active');
+};
+
 // Panic Key Logic
 if (typeof panicKeyConfig !== 'undefined' && panicKeyConfig) {
     document.addEventListener('keydown', function(e) {
+        // Only trigger if lightbox is NOT open?
+        // Actually fine if it triggers anywhere.
+
         let keys = [];
         if (e.ctrlKey) keys.push('Ctrl');
         if (e.altKey) keys.push('Alt');

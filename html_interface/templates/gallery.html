@@ -45,24 +45,6 @@
             font-weight: bold;
             color: var(--text-primary);
         }
-        /* Lightbox (simple) */
-        .lightbox {
-            display: none;
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.9);
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        }
-        .lightbox img {
-            max-width: 90%;
-            max-height: 90%;
-            border-radius: 4px;
-        }
-        .lightbox.active {
-            display: flex;
-        }
     </style>
 </head>
 <body>
@@ -85,7 +67,9 @@
         </div>
     </div>
 
-    <div class="lightbox" id="lightbox" onclick="this.classList.remove('active')">
+    <!-- Lightbox -->
+    <div class="lightbox" id="lightbox" onclick="closeLightbox()">
+        <button class="lightbox-close">&times;</button>
         <img id="lightbox-img" src="">
     </div>
 
@@ -94,6 +78,9 @@
         function openLightbox(url) {
             document.getElementById('lightbox-img').src = url;
             document.getElementById('lightbox').classList.add('active');
+        }
+        function closeLightbox() {
+            document.getElementById('lightbox').classList.remove('active');
         }
     </script>
 </body>
