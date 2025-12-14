@@ -1,4 +1,32 @@
-/* Dark mode default styles for inputs/buttons reused across pages */
+:root {
+    /* Dark Theme (Default) */
+    --bg-primary: #121212;
+    --bg-secondary: #1f1f1f;
+    --text-primary: #e0e0e0;
+    --text-secondary: rgba(255,255,255,0.6);
+    --msg-mine: #005c4b;
+    --msg-theirs: #333;
+    --input-bg: #2a2a2a;
+    --input-focus: #333;
+    --border-color: #333;
+    --bg-hover: #333;
+}
+
+body.light-mode {
+    /* Light Theme */
+    --bg-primary: #f0f2f5;
+    --bg-secondary: #ffffff;
+    --text-primary: #1a1a1a;
+    --text-secondary: rgba(0,0,0,0.6);
+    --msg-mine: #008f6f;
+    --msg-theirs: #ffffff;
+    --input-bg: #f0f2f5;
+    --input-focus: #e4e6eb;
+    --border-color: #ddd;
+    --bg-hover: #f0f2f5;
+}
+
+/* Common resets */
 body {
     -webkit-font-smoothing: antialiased;
 }

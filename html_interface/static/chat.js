@@ -5,6 +5,7 @@ const suggestionsBox = document.getElementById('emoji-suggestions');
 
 // Auto-scroll logic
 function scrollToBottom(force = false) {
+    if (!chatContainer) return;
     const isAtBottom = chatContainer.scrollHeight - chatContainer.scrollTop <= chatContainer.clientHeight + 100;
     if (force || isAtBottom) {
         chatContainer.scrollTop = chatContainer.scrollHeight;
@@ -15,24 +16,34 @@ function scrollToBottom(force = false) {
 scrollToBottom(true);
 
 socket.on('message', function(data) {
+    if (!chatContainer) return;
     const msgDiv = document.createElement('div');
     const isMine = data.sender === currentUserEmail;
 
     msgDiv.className = `message ${isMine ? 'mine' : 'theirs'}`;
 
-    let senderHtml = '';
+    // Create elements individually to prevent XSS
     if (!isMine) {
-        const senderName = data.sender.split('@')[0];
-        senderHtml = `<div class="sender-name">${senderName}</div>`;
+        const senderDiv = document.createElement('div');
+        senderDiv.className = 'sender-name';
+        senderDiv.textContent = data.sender.split('@')[0];
+        msgDiv.appendChild(senderDiv);
     }
 
-    msgDiv.innerHTML = `
-        ${senderHtml}
-        ${data.content}
-        <div class="meta">
-            <span>${data.timestamp}</span>
-        </div>
-    `;
+    // Add text content safely
+    // Note: We are appending a text node directly to the msgDiv (or checking for mixed content)
+    // The previous implementation used innerHTML with ${data.content}.
+    // Here we want the text to appear after the sender name (if present).
+    const textNode = document.createTextNode(data.content);
+    msgDiv.appendChild(textNode);
+
+    // Meta (timestamp)
+    const metaDiv = document.createElement('div');
+    metaDiv.className = 'meta';
+    const span = document.createElement('span');
+    span.textContent = data.timestamp;
+    metaDiv.appendChild(span);
+    msgDiv.appendChild(metaDiv);
 
     chatContainer.appendChild(msgDiv);
     scrollToBottom();
@@ -47,54 +58,68 @@ function sendMessage() {
     suggestionsBox.style.display = 'none';
 }
 
-messageInput.addEventListener('keypress', function(e) {
-    if (e.key === 'Enter') {
-        sendMessage();
-    }
-});
+if (messageInput) {
+    messageInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            sendMessage();
+        }
+    });
 
-// Emoji Autocomplete
-const emojis = {
-    'fire': '🔥',
-    'smile': '🙂',
-    'heart': '❤️',
-    'thumb': '👍',
-    'laugh': '😂',
-    'cry': '😭',
-    'wink': '😉',
-    'rocket': '🚀',
-    'eyes': '👀',
-    'skull': '💀'
-};
+    // Emoji Autocomplete logic ...
+    const emojis = {
+        'fire': '🔥', 'smile': '🙂', 'heart': '❤️', 'thumb': '👍',
+        'laugh': '😂', 'cry': '😭', 'wink': '😉', 'rocket': '🚀',
+        'eyes': '👀', 'skull': '💀'
+    };
 
-messageInput.addEventListener('input', function() {
-    const val = this.value;
-    const match = val.match(/:([a-z]*)$/);
+    messageInput.addEventListener('input', function() {
+        const val = this.value;
+        const match = val.match(/:([a-z]*)$/);
 
-    if (match) {
-        const query = match[1];
-        const suggestions = Object.keys(emojis).filter(name => name.startsWith(query));
+        if (match) {
+            const query = match[1];
+            const suggestions = Object.keys(emojis).filter(name => name.startsWith(query));
 
-        if (suggestions.length > 0) {
-            suggestionsBox.innerHTML = suggestions.map(name =>
-                `<div class="emoji-item" onclick="insertEmoji('${emojis[name]}', '${match[0]}')">
-                    <span>:${name}</span> <span>${emojis[name]}</span>
-                </div>`
-            ).join('');
-            suggestionsBox.style.display = 'block';
+            if (suggestions.length > 0) {
+                suggestionsBox.innerHTML = suggestions.map(name =>
+                    `<div class="emoji-item" onclick="insertEmoji('${emojis[name]}', '${match[0]}')">
+                        <span>:${name}</span> <span>${emojis[name]}</span>
+                    </div>`
+                ).join('');
+                suggestionsBox.style.display = 'block';
+            } else {
+                suggestionsBox.style.display = 'none';
+            }
         } else {
             suggestionsBox.style.display = 'none';
         }
-    } else {
-        suggestionsBox.style.display = 'none';
-    }
-});
+    });
+}
 
 window.insertEmoji = function(emoji, trigger) {
     const text = messageInput.value;
-    // Replace the last occurrence of the trigger
     const newText = text.slice(0, text.lastIndexOf(trigger)) + emoji + ' ';
     messageInput.value = newText;
     suggestionsBox.style.display = 'none';
     messageInput.focus();
 };
+
+// Panic Key Logic
+if (typeof panicKeyConfig !== 'undefined' && panicKeyConfig) {
+    document.addEventListener('keydown', function(e) {
+        let keys = [];
+        if (e.ctrlKey) keys.push('Ctrl');
+        if (e.altKey) keys.push('Alt');
+        if (e.shiftKey) keys.push('Shift');
+        if (e.metaKey) keys.push('Meta');
+
+        if (!['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) {
+            keys.push(e.key.toUpperCase());
+        }
+
+        const combo = keys.join('+');
+        if (combo === panicKeyConfig) {
+            window.location.href = decoyUrl;
+        }
+    });
+}
